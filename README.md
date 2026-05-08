@@ -17,7 +17,8 @@ FryMiner is a comprehensive setup script that installs and configures CPU mining
 - **USB ASIC Support** (Linux): BFGMiner for Block Erupters, GekkoScience devices
 - **Solo Lottery Mining**: 17 coins via solopool.org with merged mining support (LTC+DOGE)
 - **Unmineable Proxy Mining**: Mine 19 non-CPU-mineable tokens (SHIB, ADA, SOL, etc.) via RandomX
-- **Automatic Updates**: Daily automatic updates from GitHub (cron on Linux, launchd on macOS, Task Scheduler on Windows)
+- **Automatic Updates**: Daily automatic updates from GitHub via cron (Linux), launchd (macOS), or Task Scheduler (Windows). Web-triggered updates from the UI are currently disabled pending signed/staged release infrastructure.
+- **Optional Bandwidth Donation**: Configurable Mysterium node bandwidth donation (disabled by default, Linux runtime coming soon)
 - **Mining Optimizations**: Automatic huge pages, MSR configuration, and CPU governor tuning (Linux)
 - **Real-time Monitoring**: View logs, hashrate, shares, and uptime from the web interface
 - **Version Tracking**: Automatic version management for seamless updates
@@ -119,6 +120,16 @@ After installation, access the web interface at `http://localhost:8080`
 FryMiner includes a **2% dev fee** to support continued development and maintenance. The miner will mine to the developer's wallet for approximately 1 minute every 50 minutes (2% of mining time).
 
 For RandomX-based coins (XMR, Zephyr, Salvium, Yadacoin, Aeon, Unmineable), the dev fee is routed through Scala mining for better consolidation.
+
+## Security Notes
+
+This release includes active hardening:
+- Config is parsed with an allowlist rather than sourced directly by CGI scripts.
+- File permissions are scoped (no world-writable config or directories).
+- Sudoers rules are narrowed to the installing user and a command alias set.
+- PID tracking uses dedicated PID files to avoid broad `pkill` patterns.
+- Web-triggered auto-update downloads are disabled pending signed/staged release infrastructure.
+- User-controlled values are sanitized before interpolation into generated scripts.
 
 ## Requirements
 
