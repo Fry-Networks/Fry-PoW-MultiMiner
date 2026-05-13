@@ -5680,7 +5680,7 @@ case "$MINER" in
 esac
 
 mkdir -p /opt/frynet-config/output
-chmod 755 /opt/frynet-config/output
+chmod 750 /opt/frynet-config/output
 
 # Default password to "x" if empty
 [ -z "$PASSWORD" ] && PASSWORD="x"
@@ -7280,7 +7280,40 @@ SCRIPT
     
     # Create and start systemd service for web interface (survives reboot)
     create_systemd_service
-    
+
+    # Fix runtime directory ownership for the web service user
+    # SERVICE_USER is set by create_systemd_service (global scope, no local keyword)
+    if [ -n "$SERVICE_USER" ] && [ "$SERVICE_USER" != "root" ]; then
+        SERVICE_GROUP=$(id -gn "$SERVICE_USER" 2>/dev/null || echo "$SERVICE_USER")
+
+        # BASE: root-owned, service user gets group rwx via SERVICE_GROUP
+        # Sticky bit protects root-owned static files (root owns dir, not service user)
+        chown root:"$SERVICE_GROUP" "$BASE"
+        chmod 1775 "$BASE"
+
+        # Writable subdirs: recursively owned by service user
+        # Recursive because output/ contains $MINER/ subdirs with start.sh scripts
+        # and pids/ contains *.pid files — all must be writable by service user
+        chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/output"
+        chmod 750 "$BASE/output"
+        chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/logs"
+        chmod 750 "$BASE/logs"
+
+        # Runtime files in BASE: fix ownership of any leftovers from prior root install
+        # or failed/partial runs. Without this, stop.cgi can't rm root-owned miner.pid,
+        # start.sh can't rm root-owned stopped, etc.
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/config.txt" 2>/dev/null || true
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/miner.pid" 2>/dev/null || true
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/stopped" 2>/dev/null || true
+        if [ -d "$BASE/pids" ]; then
+            chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/pids"
+        fi
+
+        # Protect root-owned static assets explicitly
+        chown root:root "$BASE/index.html" "$BASE/auto_update.sh" "$BASE/version.txt" 2>/dev/null || true
+        chown -R root:root "$BASE/cgi-bin"
+    fi
+
     # Get IP
     IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
     
