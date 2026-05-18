@@ -5613,7 +5613,7 @@ sanitize_shell() {
 
 # URL-safe sanitization: preserves ? & : / @ = % + . _ - but strips shell metacharacters
 sanitize_url() {
-    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'#~\n\r\t '
+    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'"'#~\n\r\t '
 }
 WALLET=$(sanitize_shell "$WALLET")
 DOGE_WALLET=$(sanitize_shell "$DOGE_WALLET")
