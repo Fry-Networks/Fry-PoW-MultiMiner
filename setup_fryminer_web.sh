@@ -5567,11 +5567,9 @@ MYSTERIUM_DISCLOSED="false"
 
 IFS='&'
 for param in $POST_DATA; do
-    IFS='='
-    set -- $param
-    key="$1"
-    value="$2"
-    value=$(printf '%b\n' "$(echo "$value" | sed 's/+/ /g; s/%\([0-9A-F][0-9A-F]\)/\\x\1/g')")
+    key="${param%%=*}"
+    value="${param#*=}"
+    value=$(python3 -c "import sys,urllib.parse,re; v=urllib.parse.unquote_plus(sys.argv[1]); print(re.sub(r'[\x00-\x1f\x7f]', '', v))" "$value")
 
     case "$key" in
         miner) MINER="$value" ;;
@@ -5612,6 +5610,11 @@ validate_numeric "$ORE_PRIORITY_FEE" || ORE_PRIORITY_FEE="100000"
 sanitize_shell() {
     printf '%s' "$1" | tr -d ';|&$`(){}[]<>!\\*?"'"'"'#~'
 }
+
+# URL-safe sanitization: preserves ? & : / @ = % + . _ - but strips shell metacharacters
+sanitize_url() {
+    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'#~\n\r\t '
+}
 WALLET=$(sanitize_shell "$WALLET")
 DOGE_WALLET=$(sanitize_shell "$DOGE_WALLET")
 LTC_WALLET=$(sanitize_shell "$LTC_WALLET")
@@ -5621,8 +5624,8 @@ PASSWORD=$(sanitize_shell "$PASSWORD")
 GPU_MINER=$(sanitize_shell "$GPU_MINER")
 USBASIC_ALGO=$(sanitize_shell "$USBASIC_ALGO")
 ORE_KEYPAIR=$(sanitize_shell "$ORE_KEYPAIR")
-ORE_RPC=$(sanitize_shell "$ORE_RPC")
-ORA_NODE_URL=$(sanitize_shell "$ORA_NODE_URL")
+ORE_RPC=$(sanitize_url "$ORE_RPC")
+ORA_NODE_URL=$(sanitize_url "$ORA_NODE_URL")
 ORA_API_TOKEN=$(sanitize_shell "$ORA_API_TOKEN")
 
 # ORE uses keypair path as wallet, ORA uses wallet address normally
@@ -5684,6 +5687,76 @@ chmod 750 /opt/frynet-config/output
 
 # Default password to "x" if empty
 [ -z "$PASSWORD" ] && PASSWORD="x"
+
+# Stop existing miner if coin changed and mining is active
+OLD_MINER=""
+if [ -f /opt/frynet-config/config.txt ]; then
+    OLD_MINER=$(grep "^miner=" /opt/frynet-config/config.txt | cut -d= -f2)
+fi
+if [ -n "$OLD_MINER" ] && [ "$OLD_MINER" != "$MINER" ]; then
+    _pidfile="/opt/frynet-config/miner.pid"
+    _running=false
+    if [ -f "$_pidfile" ]; then
+        _tpid=$(cat "$_pidfile" 2>/dev/null)
+        if [ -n "$_tpid" ] && kill -0 "$_tpid" 2>/dev/null; then
+            _running=true
+        fi
+    fi
+    if [ "$_running" = "false" ]; then
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            if ps | grep -v grep | grep -q "$_pat" 2>/dev/null; then
+                _running=true
+                break
+            fi
+        done
+    fi
+    if [ "$_running" = "true" ]; then
+        touch /opt/frynet-config/stopped
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -TERM "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        sleep 1
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -KILL "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                kill -KILL "$_tpid" 2>/dev/null || true
+            fi
+            rm -f "$_pidfile"
+        fi
+        sleep 2
+        # Kill any remaining miner processes not tracked by PID files
+        _procs=""
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            _pids=$(ps | grep -v grep | grep "$_pat" 2>/dev/null | awk '{print $1}')
+            if [ -n "$_pids" ]; then
+                _procs="$_procs $_pids"
+            fi
+        done
+        if [ -n "$_procs" ]; then
+            for _pid in $_procs; do
+                kill -TERM "$_pid" 2>/dev/null || true
+            done
+            sleep 1
+            for _pid in $_procs; do
+                kill -KILL "$_pid" 2>/dev/null || true
+            done
+        fi
+    fi
+fi
 
 cat > /opt/frynet-config/config.txt <<EOF
 miner=$MINER
@@ -6167,7 +6240,7 @@ if [ "$USE_ORE_MINER" = "true" ]; then
         fi
         if [ -n "\$ORE_BIN" ]; then
             echo "[\$(date)] Using ore-cli: \$ORE_BIN" >> "\$LOG"
-            \$ORE_BIN --rpc $ORE_RPC_URL --keypair $ORE_KEYPAIR_PATH --priority-fee $ORE_FEE mine --cores $THREADS 2>&1 | tee -a "\$LOG" &
+            \$ORE_BIN --rpc "$ORE_RPC_URL" --keypair "$ORE_KEYPAIR_PATH" --priority-fee $ORE_FEE mine --cores $THREADS 2>&1 | tee -a "\$LOG" &
             CPU_PID=\$!
             echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
         else
