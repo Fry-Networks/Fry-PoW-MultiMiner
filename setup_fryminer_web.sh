@@ -3484,6 +3484,54 @@ ORAMINER
     fi
 }
 
+install_mystnodes() {
+    log "=== Starting MystNodes SDK installation ==="
+
+    local ARCH=$(uname -m)
+    local SDK_BINARY=""
+    local DOWNLOAD_BASE="https://github.com/Fry-Foundation/Fry-PoW-MultiMiner/releases/download/mystnodes-sdk-v1.0.0"
+
+    case "$ARCH" in
+        x86_64|amd64)
+            SDK_BINARY="sdk_client_linux_amd64"
+            ;;
+        aarch64|arm64|armv8*|armv9*)
+            SDK_BINARY="sdk_client_arm64"
+            ;;
+        armv7*|armhf|armv7l)
+            SDK_BINARY="sdk_client_arm7"
+            ;;
+        *)
+            warn "MystNodes SDK: Unsupported architecture: $ARCH"
+            return 1
+            ;;
+    esac
+
+    local DOWNLOAD_URL="${DOWNLOAD_BASE}/${SDK_BINARY}"
+    local INSTALL_PATH="/usr/local/bin/sdk_client_myst"
+    local TMP_PATH="/tmp/sdk_client_myst"
+
+    log "Downloading ${SDK_BINARY} for ${ARCH}..."
+    if curl -sL -f -o "$TMP_PATH" "$DOWNLOAD_URL" 2>/dev/null || wget -q -O "$TMP_PATH" "$DOWNLOAD_URL" 2>/dev/null; then
+        local SIZE
+        SIZE=$(stat -c%s "$TMP_PATH" 2>/dev/null || stat -f%z "$TMP_PATH" 2>/dev/null || echo 0)
+        if [ "$SIZE" -lt 1000000 ]; then
+            warn "MystNodes SDK download too small (${SIZE} bytes) - likely failed"
+            rm -f "$TMP_PATH"
+            return 1
+        fi
+
+        cp "$TMP_PATH" "$INSTALL_PATH"
+        chmod +x "$INSTALL_PATH"
+        rm -f "$TMP_PATH"
+        log "MystNodes SDK installed to ${INSTALL_PATH} (${SIZE} bytes, arch: ${ARCH})"
+        return 0
+    else
+        warn "Failed to download MystNodes SDK from $DOWNLOAD_URL"
+        return 1
+    fi
+}
+
 # Configure sudo permissions for web server to run updates
 setup_sudo_permissions() {
     log "Configuring sudo permissions for updates..."
@@ -3886,7 +3934,21 @@ main() {
     else
         warn "XLArig installation failed - Scala mining will not be available"
     fi
-    
+
+    # Install MystNodes SDK if enabled
+    if [ "$MYSTERIUM_ENABLED" = "true" ]; then
+        if [ ! -x /usr/local/bin/sdk_client_myst ]; then
+            if install_mystnodes; then
+                MYST_OK=true
+            else
+                warn "MystNodes SDK installation failed - bandwidth sharing will not be available"
+            fi
+        else
+            log "MystNodes SDK already installed, skipping download"
+            MYST_OK=true
+        fi
+    fi
+
     if install_cpuminer; then
         CPUMINER_OK=true
     else
@@ -4327,11 +4389,10 @@ optgroup { background: #1a1a1a; color: #dc143c; }
                 <div class="form-group" style="border: 1px solid #444; padding: 12px; border-radius: 6px; background: #1a1a1a;">
                     <label style="display: flex; align-items: center; cursor: pointer;">
                         <input type="checkbox" id="mysterium_donation_enabled" name="mysterium_donation_enabled" value="true" style="width: auto; margin-right: 8px;">
-                        <span>Enable optional Mysterium bandwidth donation</span>
+                        <span>Enable MystNodes SDK (bandwidth sharing)</span>
                     </label>
                     <small style="color: #888; display: block; margin-top: 8px;">
-                        Optional developer/operator bandwidth donation via Mysterium node. Disabled by default.
-                        Runtime Mysterium support is coming soon for Linux. This setting will take effect in a future update.
+                        Shares bandwidth via the MystNodes network. The SDK will be downloaded and started automatically when mining begins.
                     </small>
                 </div>
 
@@ -7122,6 +7183,35 @@ if [ -f "$SCRIPT_FILE" ]; then
         chmod 644 "'"$PID_FILE"'"
     '
 
+    # --- MystNodes SDK Start ---
+    if [ "$MYSTERIUM_ENABLED" = "true" ]; then
+        MYST_BIN="/usr/local/bin/sdk_client_myst"
+        MYST_PID_FILE="/opt/frynet-config/myst.pid"
+        MYST_TOKEN="0YUTH35fMvybF2EJHvuF8yrIqogjT3JIsOrOUfeL"
+
+        if [ -x "$MYST_BIN" ]; then
+            # Kill any existing instance
+            if [ -f "$MYST_PID_FILE" ]; then
+                kill -TERM "$(cat "$MYST_PID_FILE")" 2>/dev/null
+                sleep 1
+                kill -KILL "$(cat "$MYST_PID_FILE")" 2>/dev/null
+                rm -f "$MYST_PID_FILE"
+            fi
+            pkill -f "sdk_client_myst" 2>/dev/null || true
+            sleep 1
+
+            # Start MystNodes SDK
+            nohup "$MYST_BIN" --user.token="$MYST_TOKEN" --log.level="error" >/dev/null 2>&1 &
+            MYST_PID=$!
+            echo "$MYST_PID" > "$MYST_PID_FILE"
+            chmod 644 "$MYST_PID_FILE"
+            echo "[MystNodes] Started SDK (PID: $MYST_PID)"
+        else
+            echo "[MystNodes] Binary not found at $MYST_BIN — run install first"
+        fi
+    fi
+    # --- End MystNodes SDK Start ---
+
     # Wait for miner to initialize
     sleep 4
 
@@ -7236,6 +7326,22 @@ if [ -f "$PID_FILE" ]; then
     fi
     rm -f "$PID_FILE"
 fi
+
+# --- MystNodes SDK Stop ---
+MYST_PID_FILE="/opt/frynet-config/myst.pid"
+if [ -f "$MYST_PID_FILE" ]; then
+    MYST_PID=$(cat "$MYST_PID_FILE" 2>/dev/null)
+    if [ -n "$MYST_PID" ]; then
+        kill -TERM "$MYST_PID" 2>/dev/null
+        sleep 2
+        kill -KILL "$MYST_PID" 2>/dev/null
+    fi
+    rm -f "$MYST_PID_FILE"
+    echo "[MystNodes] Stopped SDK (PID: $MYST_PID)"
+fi
+# Fallback kill
+pkill -f "sdk_client_myst" 2>/dev/null || true
+# --- End MystNodes SDK Stop ---
 
 # Fallback: specific pkill with full binary paths
 if [ "$CAN_SUDO" = "true" ]; then
