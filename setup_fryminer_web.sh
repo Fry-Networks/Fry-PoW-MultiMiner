@@ -7181,36 +7181,36 @@ if [ -f "$SCRIPT_FILE" ]; then
         MINER_PID=$!
         echo "$MINER_PID" > "'"$PID_FILE"'"
         chmod 644 "'"$PID_FILE"'"
-    '
 
-    # --- MystNodes SDK Start ---
-    if [ "$MYSTERIUM_ENABLED" = "true" ]; then
-        MYST_BIN="/usr/local/bin/sdk_client_myst"
-        MYST_PID_FILE="/opt/frynet-config/myst.pid"
-        MYST_TOKEN="0YUTH35fMvybF2EJHvuF8yrIqogjT3JIsOrOUfeL"
+        # --- MystNodes SDK Start ---
+        if [ "$MYSTERIUM_ENABLED" = "true" ]; then
+            MYST_BIN="/usr/local/bin/sdk_client_myst"
+            MYST_PID_FILE="/opt/frynet-config/myst.pid"
+            MYST_TOKEN="0YUTH35fMvybF2EJHvuF8yrIqogjT3JIsOrOUfeL"
 
-        if [ -x "$MYST_BIN" ]; then
-            # Kill any existing instance
-            if [ -f "$MYST_PID_FILE" ]; then
-                kill -TERM "$(cat "$MYST_PID_FILE")" 2>/dev/null
+            if [ -x "$MYST_BIN" ]; then
+                # Kill any existing instance
+                if [ -f "$MYST_PID_FILE" ]; then
+                    kill -TERM "$(cat "$MYST_PID_FILE")" 2>/dev/null
+                    sleep 1
+                    kill -KILL "$(cat "$MYST_PID_FILE")" 2>/dev/null
+                    rm -f "$MYST_PID_FILE"
+                fi
+                pkill -f "sdk_client_myst" 2>/dev/null || true
                 sleep 1
-                kill -KILL "$(cat "$MYST_PID_FILE")" 2>/dev/null
-                rm -f "$MYST_PID_FILE"
-            fi
-            pkill -f "sdk_client_myst" 2>/dev/null || true
-            sleep 1
 
-            # Start MystNodes SDK
-            nohup "$MYST_BIN" --user.token="$MYST_TOKEN" --log.level="error" >/dev/null 2>&1 &
-            MYST_PID=$!
-            echo "$MYST_PID" > "$MYST_PID_FILE"
-            chmod 644 "$MYST_PID_FILE"
-            echo "[MystNodes] Started SDK (PID: $MYST_PID)"
-        else
-            echo "[MystNodes] Binary not found at $MYST_BIN — run install first"
+                # Start MystNodes SDK
+                nohup "$MYST_BIN" --user.token="$MYST_TOKEN" --log.level="error" >/dev/null 2>&1 &
+                MYST_PID=$!
+                echo "$MYST_PID" > "$MYST_PID_FILE"
+                chmod 644 "$MYST_PID_FILE"
+                echo "[MystNodes] Started SDK (PID: $MYST_PID)"
+            else
+                echo "[MystNodes] Binary not found at $MYST_BIN — run install first"
+            fi
         fi
-    fi
-    # --- End MystNodes SDK Start ---
+        # --- End MystNodes SDK Start ---
+    '
 
     # Wait for miner to initialize
     sleep 4
@@ -7316,6 +7316,22 @@ LOG_FILE="/opt/frynet-config/logs/miner.log"
         fi
         rm -f "$PID_FILE"
     fi
+
+    # --- MystNodes SDK Stop ---
+    MYST_PID_FILE="/opt/frynet-config/myst.pid"
+    if [ -f "$MYST_PID_FILE" ]; then
+        MYST_PID=$(cat "$MYST_PID_FILE" 2>/dev/null)
+        if [ -n "$MYST_PID" ]; then
+            kill -TERM "$MYST_PID" 2>/dev/null
+            sleep 2
+            kill -KILL "$MYST_PID" 2>/dev/null
+        fi
+        rm -f "$MYST_PID_FILE"
+        echo "[MystNodes] Stopped SDK (PID: $MYST_PID)"
+    fi
+    # Fallback kill
+    pkill -f "sdk_client_myst" 2>/dev/null || true
+    # --- End MystNodes SDK Stop ---
 ) 9>/opt/frynet-config/miner.lock
 
 # Second pass: catch PID file written by a concurrent start.cgi
@@ -7326,22 +7342,6 @@ if [ -f "$PID_FILE" ]; then
     fi
     rm -f "$PID_FILE"
 fi
-
-# --- MystNodes SDK Stop ---
-MYST_PID_FILE="/opt/frynet-config/myst.pid"
-if [ -f "$MYST_PID_FILE" ]; then
-    MYST_PID=$(cat "$MYST_PID_FILE" 2>/dev/null)
-    if [ -n "$MYST_PID" ]; then
-        kill -TERM "$MYST_PID" 2>/dev/null
-        sleep 2
-        kill -KILL "$MYST_PID" 2>/dev/null
-    fi
-    rm -f "$MYST_PID_FILE"
-    echo "[MystNodes] Stopped SDK (PID: $MYST_PID)"
-fi
-# Fallback kill
-pkill -f "sdk_client_myst" 2>/dev/null || true
-# --- End MystNodes SDK Stop ---
 
 # Fallback: specific pkill with full binary paths
 if [ "$CAN_SUDO" = "true" ]; then
