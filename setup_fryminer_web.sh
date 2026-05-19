@@ -51,6 +51,37 @@ log() { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Safe config parser — reads only allowlisted keys. Never evals arbitrary shell.
+read_config() {
+    _rcf="${1:-/opt/frynet-config/config.txt}"
+    [ -f "$_rcf" ] || return 1
+    while IFS='=' read -r _key _val; do
+        case "$_key" in ''|'#'*) continue ;; esac
+        case "$_key" in
+            miner) miner="$_val" ;;
+            wallet) wallet="$_val" ;;
+            doge_wallet) doge_wallet="$_val" ;;
+            ltc_wallet) ltc_wallet="$_val" ;;
+            worker) worker="$_val" ;;
+            threads) threads="$_val" ;;
+            pool) pool="$_val" ;;
+            password) password="$_val" ;;
+            cpu_mining) cpu_mining="$_val" ;;
+            gpu_mining) gpu_mining="$_val" ;;
+            gpu_miner) gpu_miner="$_val" ;;
+            usbasic_mining) usbasic_mining="$_val" ;;
+            usbasic_algo) usbasic_algo="$_val" ;;
+            ore_keypair) ore_keypair="$_val" ;;
+            ore_rpc) ore_rpc="$_val" ;;
+            ore_priority_fee) ore_priority_fee="$_val" ;;
+            ora_node_url) ora_node_url="$_val" ;;
+            ora_api_token) ora_api_token="$_val" ;;
+            mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
+            mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+        esac
+    done < "$_rcf"
+}
+
 # Root check - smarter handling for UPDATE_MODE
 check_root_or_permissions() {
     # If we're root, all good
@@ -248,177 +279,9 @@ if [ "$REMOTE_VER" = "$LOCAL_VER" ]; then
     exit 0
 fi
 
-log_msg "Update available! Starting update process..."
+log_msg "Update available (remote: $REMOTE_VER, local: $LOCAL_VER). Automatic updates are disabled. Please update manually."
 
-# Check if miner was running and stop it before updating
-WAS_MINING=false
-if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-        WAS_MINING=true
-        log_msg "Miner is running, stopping mining for update..."
-
-        # Create stop marker
-        touch /opt/frynet-config/stopped 2>/dev/null
-
-        # Stop all mining processes gracefully first
-        pkill -TERM -f "xmrig" 2>/dev/null || true
-        pkill -TERM -f "xlarig" 2>/dev/null || true
-        pkill -TERM -f "cpuminer" 2>/dev/null || true
-        pkill -TERM -f "SRBMiner-MULTI" 2>/dev/null || true
-        pkill -TERM -f "lolMiner" 2>/dev/null || true
-        pkill -TERM -f "t-rex" 2>/dev/null || true
-        pkill -TERM -f "bfgminer" 2>/dev/null || true
-        pkill -TERM -f "cgminer" 2>/dev/null || true
-
-        # Wait for graceful shutdown
-        sleep 3
-
-        # Force kill any remaining
-        pkill -9 -f "xmrig" 2>/dev/null || true
-        pkill -9 -f "xlarig" 2>/dev/null || true
-        pkill -9 -f "cpuminer" 2>/dev/null || true
-        pkill -9 -f "SRBMiner-MULTI" 2>/dev/null || true
-        pkill -9 -f "lolMiner" 2>/dev/null || true
-        pkill -9 -f "t-rex" 2>/dev/null || true
-        pkill -9 -f "bfgminer" 2>/dev/null || true
-        pkill -9 -f "cgminer" 2>/dev/null || true
-
-        sleep 2
-        log_msg "Mining stopped for update"
-    fi
-fi
-
-# Backup current config
-if [ -f "$CONFIG_FILE" ]; then
-    cp "$CONFIG_FILE" "$CONFIG_BACKUP"
-    log_msg "Config backed up"
-fi
-
-# Download new version
-TEMP_SCRIPT="/tmp/fryminer_update_$$.sh"
-if command -v curl >/dev/null 2>&1; then
-    curl -sL -o "$TEMP_SCRIPT" "$DOWNLOAD_URL" 2>/dev/null
-else
-    wget -q -O "$TEMP_SCRIPT" "$DOWNLOAD_URL" 2>/dev/null
-fi
-
-if [ ! -s "$TEMP_SCRIPT" ]; then
-    log_msg "ERROR: Failed to download update"
-    rm -f "$TEMP_SCRIPT"
-    exit 1
-fi
-
-log_msg "Downloaded update, installing..."
-
-# Run the update script
-chmod +x "$TEMP_SCRIPT"
-sh "$TEMP_SCRIPT" >> "$LOG_FILE" 2>&1
-UPDATE_STATUS=$?
-
-if [ $UPDATE_STATUS -eq 0 ]; then
-    # Restore config
-    if [ -f "$CONFIG_BACKUP" ]; then
-        cp "$CONFIG_BACKUP" "$CONFIG_FILE"
-        log_msg "Config restored"
-    fi
-    
-    # Update version file
-    echo "$REMOTE_VER" > "$VERSION_FILE"
-    log_msg "Version updated to $REMOTE_VER"
-    
-    # Restart mining if it was running before
-    if [ "$WAS_MINING" = "true" ] && [ -f "$CONFIG_FILE" ]; then
-        log_msg "Restarting mining..."
-        sleep 3
-
-        # Remove stop marker so mining can start
-        rm -f /opt/frynet-config/stopped 2>/dev/null
-
-        # Source config and find start script
-        . "$CONFIG_FILE"
-        SCRIPT_FILE="/opt/frynet-config/output/$miner/start.sh"
-
-        if [ -f "$SCRIPT_FILE" ]; then
-            # Kill any existing miners (just in case)
-            pkill -9 -f "xmrig" 2>/dev/null || true
-            pkill -9 -f "xlarig" 2>/dev/null || true
-            pkill -9 -f "cpuminer" 2>/dev/null || true
-            # GPU miners
-            pkill -9 -f "SRBMiner-MULTI" 2>/dev/null || true
-            pkill -9 -f "lolMiner" 2>/dev/null || true
-            pkill -9 -f "t-rex" 2>/dev/null || true
-            # USB ASIC miners
-            pkill -9 -f "bfgminer" 2>/dev/null || true
-            pkill -9 -f "cgminer" 2>/dev/null || true
-            sleep 2
-
-            # Start miner - script handles its own logging
-            nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-            NEW_PID=$!
-            echo "$NEW_PID" > "$PID_FILE"
-            log_msg "Mining restarted with PID $NEW_PID"
-        else
-            log_msg "WARNING: Start script not found at $SCRIPT_FILE"
-            log_msg "Mining was active but cannot auto-restart."
-            log_msg "Please re-save configuration via web interface to regenerate start script."
-            # Also log to miner log for visibility in the Activity tab
-            MINER_LOG="/opt/frynet-config/logs/miner.log"
-            echo "[$(date)] WARNING: Auto-update completed but start script missing" >> "$MINER_LOG"
-            echo "[$(date)] Expected: $SCRIPT_FILE" >> "$MINER_LOG"
-            echo "[$(date)] Please click 'Save' in web interface to regenerate and restart mining" >> "$MINER_LOG"
-        fi
-    fi
-    
-    log_msg "=== Update completed successfully ==="
-else
-    log_msg "ERROR: Update failed with status $UPDATE_STATUS"
-    # Restore backup config on failure
-    if [ -f "$CONFIG_BACKUP" ]; then
-        cp "$CONFIG_BACKUP" "$CONFIG_FILE"
-        log_msg "Config restored from backup"
-    fi
-
-    # CRITICAL: Restart mining even if update failed!
-    # The update killed the miner, so we must restart it regardless of update outcome
-    if [ "$WAS_MINING" = "true" ] && [ -f "$CONFIG_FILE" ]; then
-        log_msg "Update failed but miner was running - restarting mining..."
-        sleep 3
-
-        # Remove stop marker so mining can start
-        rm -f /opt/frynet-config/stopped 2>/dev/null
-
-        # Source config and find start script
-        . "$CONFIG_FILE"
-        SCRIPT_FILE="/opt/frynet-config/output/$miner/start.sh"
-
-        if [ -f "$SCRIPT_FILE" ]; then
-            # Kill any existing miners (just in case)
-            pkill -9 -f "xmrig" 2>/dev/null || true
-            pkill -9 -f "xlarig" 2>/dev/null || true
-            pkill -9 -f "cpuminer" 2>/dev/null || true
-            pkill -9 -f "ccminer" 2>/dev/null || true
-            pkill -9 -f "nheqminer" 2>/dev/null || true
-            pkill -9 -f "SRBMiner-MULTI" 2>/dev/null || true
-            pkill -9 -f "lolMiner" 2>/dev/null || true
-            pkill -9 -f "t-rex" 2>/dev/null || true
-            pkill -9 -f "bfgminer" 2>/dev/null || true
-            pkill -9 -f "cgminer" 2>/dev/null || true
-            sleep 2
-
-            nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-            NEW_PID=$!
-            echo "$NEW_PID" > "$PID_FILE"
-            log_msg "Mining restarted with PID $NEW_PID (using previous version)"
-        else
-            log_msg "WARNING: Start script not found at $SCRIPT_FILE"
-            log_msg "Please re-save configuration via web interface to restart mining."
-            MINER_LOG="/opt/frynet-config/logs/miner.log"
-            echo "[$(date)] WARNING: Auto-update failed and could not restart mining" >> "$MINER_LOG"
-            echo "[$(date)] Please click 'Save' in web interface to restart mining" >> "$MINER_LOG"
-        fi
-    fi
-fi
+log_msg "=== Auto-update check completed ==="
 
 rm -f "$TEMP_SCRIPT"
 AUTOUPDATE
@@ -468,7 +331,7 @@ AUTOUPDATE
     
     # Create update log
     touch /opt/frynet-config/logs/update.log 2>/dev/null || true
-    chmod 666 /opt/frynet-config/logs/update.log 2>/dev/null || true
+    chmod 640 /opt/frynet-config/logs/update.log 2>/dev/null || true
     
     log "Auto-update configured"
 }
@@ -3670,31 +3533,20 @@ setup_sudo_permissions() {
     # Remove old fryminer sudoers file if it exists
     rm -f /etc/sudoers.d/fryminer 2>/dev/null
     
-    # Create new sudoers file with SIMPLE, BROAD permissions
-    # Include common web server users and the detected user
+    # Create new sudoers file with SCOPED permissions
     cat > /etc/sudoers.d/fryminer << EOF
-# FryMiner passwordless sudo configuration
+# FryMiner scoped sudo configuration
 # Generated automatically by setup script
 
+Cmnd_Alias FRYMINER_KILL = /usr/bin/pkill, /bin/pkill, /usr/bin/kill, /bin/kill
+Cmnd_Alias FRYMINER_SYS = /bin/systemctl, /usr/bin/systemctl
+Cmnd_Alias FRYMINER_FS = /bin/mkdir, /usr/bin/mkdir, /bin/chmod, /usr/bin/chmod, /bin/chown, /usr/bin/chown
+Cmnd_Alias FRYMINER_PKG = /usr/bin/apt-get, /usr/bin/apt, /usr/bin/pacman, /usr/bin/yum, /usr/bin/dnf
+Cmnd_Alias FRYMINER_SHELL = /bin/sh, /usr/bin/sh, /bin/bash, /usr/bin/bash
+
 # Primary user (who ran the setup)
-$REAL_USER ALL=(ALL) NOPASSWD: ALL
-
-# Common system users that might run the web server
-fry ALL=(ALL) NOPASSWD: ALL
-pi ALL=(ALL) NOPASSWD: ALL
-ubuntu ALL=(ALL) NOPASSWD: ALL
-debian ALL=(ALL) NOPASSWD: ALL
-www-data ALL=(ALL) NOPASSWD: ALL
-nobody ALL=(ALL) NOPASSWD: ALL
-
-# Disable tty requirement for all these users
+$REAL_USER ALL=(ALL) NOPASSWD: FRYMINER_KILL, FRYMINER_SYS, FRYMINER_FS, FRYMINER_PKG, FRYMINER_SHELL
 Defaults:$REAL_USER !requiretty
-Defaults:fry !requiretty
-Defaults:pi !requiretty
-Defaults:ubuntu !requiretty
-Defaults:debian !requiretty
-Defaults:www-data !requiretty
-Defaults:nobody !requiretty
 EOF
     
     # Set correct permissions
@@ -4165,10 +4017,10 @@ main() {
     fi
     
     # Set permissions
-    chmod 777 "$BASE"
-    chmod 777 "$BASE/cgi-bin"
-    chmod 777 "$BASE/output"
-    chmod 777 "$BASE/logs"
+    chmod 755 "$BASE"
+    chmod 755 "$BASE/cgi-bin"
+    chmod 750 "$BASE/output"
+    chmod 750 "$BASE/logs"
     
     log "Creating web interface..."
     
@@ -4472,6 +4324,17 @@ optgroup { background: #1a1a1a; color: #dc143c; }
                     <small style="color: #888;">Leave as "x" unless your pool requires a specific password for difficulty settings, email notifications, etc.</small>
                 </div>
                 
+                <div class="form-group" style="border: 1px solid #444; padding: 12px; border-radius: 6px; background: #1a1a1a;">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="mysterium_donation_enabled" name="mysterium_donation_enabled" value="true" style="width: auto; margin-right: 8px;">
+                        <span>Enable optional Mysterium bandwidth donation</span>
+                    </label>
+                    <small style="color: #888; display: block; margin-top: 8px;">
+                        Optional developer/operator bandwidth donation via Mysterium node. Disabled by default.
+                        Runtime Mysterium support is coming soon for Linux. This setting will take effect in a future update.
+                    </small>
+                </div>
+
                 <button type="submit">💾 Save Configuration</button>
             </form>
             
@@ -5161,6 +5024,9 @@ function loadConfig() {
                 if (data.ora_node_url) document.getElementById('ora_node_url').value = data.ora_node_url;
                 if (data.ora_api_token) document.getElementById('ora_api_token').value = data.ora_api_token;
 
+                // Load Mysterium donation setting
+                document.getElementById('mysterium_donation_enabled').checked = (data.mysterium_donation_enabled === 'true');
+
                 // Update UI visibility
                 updateMiningModeUI();
 
@@ -5696,14 +5562,14 @@ ORE_RPC=""
 ORE_PRIORITY_FEE="100000"
 ORA_NODE_URL=""
 ORA_API_TOKEN=""
+MYSTERIUM_ENABLED="false"
+MYSTERIUM_DISCLOSED="false"
 
 IFS='&'
 for param in $POST_DATA; do
-    IFS='='
-    set -- $param
-    key="$1"
-    value="$2"
-    value=$(echo "$value" | sed 's/+/ /g' | sed 's/%\([0-9A-F][0-9A-F]\)/\\x\1/g' | xargs -0 printf "%b")
+    key="${param%%=*}"
+    value="${param#*=}"
+    value=$(python3 -c "import sys,urllib.parse,re; v=urllib.parse.unquote_plus(sys.argv[1]); print(re.sub(r'[\x00-\x1f\x7f]', '', v))" "$value")
 
     case "$key" in
         miner) MINER="$value" ;;
@@ -5724,9 +5590,43 @@ for param in $POST_DATA; do
         ore_priority_fee) ORE_PRIORITY_FEE="$value" ;;
         ora_node_url) ORA_NODE_URL="$value" ;;
         ora_api_token) ORA_API_TOKEN="$value" ;;
+        mysterium_donation_enabled) MYSTERIUM_ENABLED="$value" ;;
+        mysterium_donation_disclosed) MYSTERIUM_DISCLOSED="$value" ;;
     esac
 done
 IFS=' '
+
+# Validate numeric fields
+validate_numeric() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+validate_numeric "$THREADS" || THREADS="2"
+validate_numeric "$ORE_PRIORITY_FEE" || ORE_PRIORITY_FEE="100000"
+
+# Strip shell metacharacters from fields interpolated into generated scripts
+sanitize_shell() {
+    printf '%s' "$1" | tr -d ';|&$`(){}[]<>!\\*?"'"'"'#~'
+}
+
+# URL-safe sanitization: preserves ? & : / @ = % + . _ - but strips shell metacharacters
+sanitize_url() {
+    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'"'#~\n\r\t '
+}
+WALLET=$(sanitize_shell "$WALLET")
+DOGE_WALLET=$(sanitize_shell "$DOGE_WALLET")
+LTC_WALLET=$(sanitize_shell "$LTC_WALLET")
+WORKER=$(sanitize_shell "$WORKER")
+POOL=$(sanitize_shell "$POOL")
+PASSWORD=$(sanitize_shell "$PASSWORD")
+GPU_MINER=$(sanitize_shell "$GPU_MINER")
+USBASIC_ALGO=$(sanitize_shell "$USBASIC_ALGO")
+ORE_KEYPAIR=$(sanitize_shell "$ORE_KEYPAIR")
+ORE_RPC=$(sanitize_url "$ORE_RPC")
+ORA_NODE_URL=$(sanitize_url "$ORA_NODE_URL")
+ORA_API_TOKEN=$(sanitize_shell "$ORA_API_TOKEN")
 
 # ORE uses keypair path as wallet, ORA uses wallet address normally
 if [ "$MINER" = "ore" ] && [ -z "$WALLET" ]; then
@@ -5783,12 +5683,84 @@ case "$MINER" in
 esac
 
 mkdir -p /opt/frynet-config/output
-chmod 777 /opt/frynet-config/output
+chmod 750 /opt/frynet-config/output
 
 # Default password to "x" if empty
 [ -z "$PASSWORD" ] && PASSWORD="x"
 
-cat > /opt/frynet-config/config.txt <<EOF
+# Stop existing miner if coin changed and mining is active
+OLD_MINER=""
+if [ -f /opt/frynet-config/config.txt ]; then
+    OLD_MINER=$(grep "^miner=" /opt/frynet-config/config.txt | cut -d= -f2)
+fi
+if [ -n "$OLD_MINER" ] && [ "$OLD_MINER" != "$MINER" ]; then
+    _pidfile="/opt/frynet-config/miner.pid"
+    _running=false
+    if [ -f "$_pidfile" ]; then
+        _tpid=$(cat "$_pidfile" 2>/dev/null)
+        if [ -n "$_tpid" ] && kill -0 "$_tpid" 2>/dev/null; then
+            _running=true
+        fi
+    fi
+    if [ "$_running" = "false" ]; then
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            if ps | grep -v grep | grep -q "$_pat" 2>/dev/null; then
+                _running=true
+                break
+            fi
+        done
+    fi
+    if [ "$_running" = "true" ]; then
+        touch /opt/frynet-config/stopped
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -TERM "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        sleep 1
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -KILL "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                kill -KILL "$_tpid" 2>/dev/null || true
+            fi
+            rm -f "$_pidfile"
+        fi
+        sleep 2
+        # Kill any remaining miner processes not tracked by PID files
+        _procs=""
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            _pids=$(ps | grep -v grep | grep "$_pat" 2>/dev/null | awk '{print $1}')
+            if [ -n "$_pids" ]; then
+                _procs="$_procs $_pids"
+            fi
+        done
+        if [ -n "$_procs" ]; then
+            for _pid in $_procs; do
+                kill -TERM "$_pid" 2>/dev/null || true
+            done
+            sleep 1
+            for _pid in $_procs; do
+                kill -KILL "$_pid" 2>/dev/null || true
+            done
+        fi
+    fi
+fi
+
+(
+    flock -x 9
+    cat > /opt/frynet-config/config.txt <<EOF
 miner=$MINER
 wallet=$WALLET
 doge_wallet=$DOGE_WALLET
@@ -5807,8 +5779,11 @@ ore_rpc=$ORE_RPC
 ore_priority_fee=$ORE_PRIORITY_FEE
 ora_node_url=$ORA_NODE_URL
 ora_api_token=$ORA_API_TOKEN
+mysterium_donation_enabled=${MYSTERIUM_ENABLED:-false}
+mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
 EOF
-chmod 666 /opt/frynet-config/config.txt
+    chmod 640 /opt/frynet-config/config.txt
+) 9>/opt/frynet-config/miner.lock
 
 SCRIPT_DIR="/opt/frynet-config/output/$MINER"
 mkdir -p "$SCRIPT_DIR"
@@ -6170,6 +6145,7 @@ cat >> "$SCRIPT_FILE" <<'RESTOFSCRIPT'
 
 # Remove clean stop marker
 rm -f /opt/frynet-config/stopped 2>/dev/null
+mkdir -p /opt/frynet-config/pids
 
 # Run optimization script if available (huge pages, MSR, etc)
 if [ -x /opt/frynet-config/optimize.sh ]; then
@@ -6179,52 +6155,43 @@ fi
 
 # Function to stop miner gracefully with proper cleanup
 stop_miner() {
-    # Send SIGTERM first for graceful shutdown
-    pkill -TERM -f "xmrig" 2>/dev/null
-    pkill -TERM -f "xlarig" 2>/dev/null
-    pkill -TERM -f "cpuminer" 2>/dev/null
-    pkill -TERM -f "minerd" 2>/dev/null
-    # GPU miners
-    pkill -TERM -f "SRBMiner-MULTI" 2>/dev/null
-    pkill -TERM -f "lolMiner" 2>/dev/null
-    pkill -TERM -f "t-rex" 2>/dev/null
-    # USB ASIC miners
-    pkill -TERM -f "bfgminer" 2>/dev/null
-    pkill -TERM -f "cgminer" 2>/dev/null
-    # Verus miners
-    pkill -TERM -f "ccminer-verus" 2>/dev/null
-    pkill -TERM -f "ccminer.*verus" 2>/dev/null
-    pkill -TERM -f "hellminer" 2>/dev/null
-    pkill -TERM -f "nheqminer" 2>/dev/null
+    # Kill tracked PIDs first (SIGTERM)
+    for _pid in "$CPU_PID" "$GPU_PID" "$ASIC_PID"; do
+        if [ -n "$_pid" ]; then
+            kill -TERM "$_pid" 2>/dev/null || true
+        fi
+    done
 
     # Wait for processes to actually terminate (up to 5 seconds)
     WAIT_COUNT=0
     while [ $WAIT_COUNT -lt 10 ]; do
-        # Check if any miner processes are still running
-        if ! pgrep -f "xmrig|xlarig|cpuminer|minerd|SRBMiner-MULTI|lolMiner|t-rex|bfgminer|cgminer|ccminer|hellminer|nheqminer" >/dev/null 2>&1; then
+        if ! kill -0 "$CPU_PID" 2>/dev/null && ! kill -0 "$GPU_PID" 2>/dev/null && ! kill -0 "$ASIC_PID" 2>/dev/null; then
             break
         fi
         sleep 0.5
         WAIT_COUNT=$((WAIT_COUNT + 1))
     done
 
-    # Force kill any remaining processes
-    pkill -KILL -f "xmrig" 2>/dev/null
-    pkill -KILL -f "xlarig" 2>/dev/null
-    pkill -KILL -f "cpuminer" 2>/dev/null
-    pkill -KILL -f "minerd" 2>/dev/null
-    # GPU miners
-    pkill -KILL -f "SRBMiner-MULTI" 2>/dev/null
-    pkill -KILL -f "lolMiner" 2>/dev/null
-    # USB ASIC miners
-    pkill -KILL -f "bfgminer" 2>/dev/null
-    pkill -KILL -f "cgminer" 2>/dev/null
-    pkill -KILL -f "t-rex" 2>/dev/null
-    # Verus miners
-    pkill -KILL -f "ccminer-verus" 2>/dev/null
-    pkill -KILL -f "ccminer.*verus" 2>/dev/null
-    pkill -KILL -f "hellminer" 2>/dev/null
-    pkill -KILL -f "nheqminer" 2>/dev/null
+    # Force kill tracked PIDs (SIGKILL)
+    for _pid in "$CPU_PID" "$GPU_PID" "$ASIC_PID"; do
+        if [ -n "$_pid" ]; then
+            kill -KILL "$_pid" 2>/dev/null || true
+        fi
+    done
+
+    # Fallback: specific pkill with full binary paths
+    pkill -KILL -f /usr/local/bin/xmrig 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/xlarig 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/cpuminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/minerd 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/SRBMiner-MULTI 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/lolMiner 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/t-rex 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/bfgminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/cgminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/ccminer-verus 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/hellminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/nheqminer 2>/dev/null || true
 
     # Additional wait for TCP connections to fully close (TIME_WAIT cleanup)
     sleep 3
@@ -6276,8 +6243,9 @@ if [ "$USE_ORE_MINER" = "true" ]; then
         fi
         if [ -n "\$ORE_BIN" ]; then
             echo "[\$(date)] Using ore-cli: \$ORE_BIN" >> "\$LOG"
-            \$ORE_BIN --rpc $ORE_RPC_URL --keypair $ORE_KEYPAIR_PATH --priority-fee $ORE_FEE mine --cores $THREADS 2>&1 | tee -a "\$LOG" &
+            \$ORE_BIN --rpc "$ORE_RPC_URL" --keypair "$ORE_KEYPAIR_PATH" --priority-fee $ORE_FEE mine --cores $THREADS 2>&1 | tee -a "\$LOG" &
             CPU_PID=\$!
+            echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
         else
             echo "[\$(date)] ERROR: ore-cli not found! Run setup_fryminer_web.sh to reinstall." >> "\$LOG"
         fi
@@ -6291,6 +6259,7 @@ elif [ "$USE_ORA_MINER" = "true" ]; then
             echo "[\$(date)] Starting ORA (Oranges) miner via Algorand tx mining" >> "\$LOG"
             /opt/frynet-config/scripts/ora_miner.sh "\$USER_WALLET" "$ORA_NODE" "$ORA_TOKEN" "$THREADS" "\$LOG" &
             CPU_PID=\$!
+            echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
         else
             echo "[\$(date)] ERROR: ORA miner script not found at /opt/frynet-config/scripts/ora_miner.sh" >> "\$LOG"
             echo "[\$(date)] Run setup_fryminer_web.sh to reinstall." >> "\$LOG"
@@ -6301,6 +6270,7 @@ elif [ "$USE_XLARIG" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/xlarig -o $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a panthera --no-color --donate-level=0 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
 elif [ "$USE_VERUS_MINER" = "true" ]; then
     # Verus mining uses ccminer from monkins1010/ccminer (ARM or Verus2.2 branch)
@@ -6358,11 +6328,13 @@ VERUS_DETECT
                 # ccminer format: -a verus -o stratum+tcp://pool:port -u wallet -p x -t threads
                 "\$VERUS_MINER" -a verus -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
                 CPU_PID=\$!
+                echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                 ;;
             nheqminer)
                 # nheqminer-verus format: -v (verushash) -l pool:port -u wallet -p x -t threads
                 "\$VERUS_MINER" -v -l $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
                 CPU_PID=\$!
+                echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                 ;;
             *)
                 echo "[$(date)] Unknown Verus miner type: \$VERUS_MINER_TYPE" >> "\$LOG"
@@ -6373,6 +6345,7 @@ elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS --retry 10 --retry-pause 30 --timeout 300 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
 else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
@@ -6380,11 +6353,13 @@ else
         cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/xmrig -o $POOL -u \$USER_WALLET.$WORKER#$UNMINEABLE_REFERRAL -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     else
         cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/xmrig -o $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     fi
 fi
@@ -6406,6 +6381,7 @@ GPUCHECK
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/SRBMiner-MULTI --pool $POOL --wallet "\$USER_WALLET_STRING" --password \$USER_PASSWORD --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'GPUMID'
@@ -6417,6 +6393,7 @@ GPUMID
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/lolMiner --pool $POOL --user "\$USER_WALLET_STRING" --pass \$USER_PASSWORD --algo $ALGO 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'GPUMID2'
@@ -6428,6 +6405,7 @@ GPUMID2
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'GPUEND'
@@ -6454,9 +6432,11 @@ cat >> "$SCRIPT_FILE" <<EOF
         if [ -x /usr/local/bin/bfgminer ]; then
             /usr/local/bin/bfgminer -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
+            echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         elif command -v bfgminer >/dev/null 2>&1; then
             bfgminer -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
+            echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         else
             echo "[\$(date)] ERROR: bfgminer not found, USB ASIC mining unavailable" >> "\$LOG"
         fi
@@ -6564,10 +6544,12 @@ DEVVERUS_DETECT
                 ccminer)
                     "\$VERUS_MINER" -a verus -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
+                    echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
                 nheqminer)
                     "\$VERUS_MINER" -v -l $POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
+                    echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
             esac
         fi
@@ -6576,6 +6558,7 @@ elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retry 10 --retry-pause 30 --timeout 300 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
 elif [ "$DEV_USE_SCALA" = "true" ]; then
     # RandomX coins: Mine Scala during dev fee using XLArig
@@ -6583,6 +6566,7 @@ elif [ "$DEV_USE_SCALA" = "true" ]; then
         echo "[\$(date)] (Routing to Scala - using XLArig)" >> "\$LOG"
         /usr/local/bin/xlarig -o $DEV_SCALA_POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a panthera --no-color --donate-level=0 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
 else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
@@ -6590,11 +6574,13 @@ else
         cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/xmrig -o $POOL -u \$DEV_WALLET.frydev#$UNMINEABLE_REFERRAL -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     else
         cat >> "$SCRIPT_FILE" <<EOF
         /usr/local/bin/xmrig -o $POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
+        echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     fi
 fi
@@ -6614,6 +6600,7 @@ DEVGPUCHECK
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/SRBMiner-MULTI --pool $POOL --wallet \$DEV_WALLET.frydev --password x --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'DEVGPUMID'
@@ -6624,6 +6611,7 @@ DEVGPUMID
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/lolMiner --pool $POOL --user \$DEV_WALLET.frydev --pass x --algo $ALGO 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'DEVGPUMID2'
@@ -6634,6 +6622,7 @@ DEVGPUMID2
 cat >> "$SCRIPT_FILE" <<EOF
                 /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
+                echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
 
 cat >> "$SCRIPT_FILE" <<'DEVGPUEND'
@@ -6652,9 +6641,11 @@ cat >> "$SCRIPT_FILE" <<EOF
         if [ -x /usr/local/bin/bfgminer ]; then
             /usr/local/bin/bfgminer -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
+            echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         elif command -v bfgminer >/dev/null 2>&1; then
             bfgminer -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
+            echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         fi
 EOF
 
@@ -6708,8 +6699,39 @@ SCRIPT
 echo "Content-type: application/json"
 echo ""
 
+# Safe config parser — reads only allowlisted keys. Never evals arbitrary shell.
+read_config() {
+    _rcf="${1:-/opt/frynet-config/config.txt}"
+    [ -f "$_rcf" ] || return 1
+    while IFS='=' read -r _key _val; do
+        case "$_key" in ''|'#'*) continue ;; esac
+        case "$_key" in
+            miner) miner="$_val" ;;
+            wallet) wallet="$_val" ;;
+            doge_wallet) doge_wallet="$_val" ;;
+            ltc_wallet) ltc_wallet="$_val" ;;
+            worker) worker="$_val" ;;
+            threads) threads="$_val" ;;
+            pool) pool="$_val" ;;
+            password) password="$_val" ;;
+            cpu_mining) cpu_mining="$_val" ;;
+            gpu_mining) gpu_mining="$_val" ;;
+            gpu_miner) gpu_miner="$_val" ;;
+            usbasic_mining) usbasic_mining="$_val" ;;
+            usbasic_algo) usbasic_algo="$_val" ;;
+            ore_keypair) ore_keypair="$_val" ;;
+            ore_rpc) ore_rpc="$_val" ;;
+            ore_priority_fee) ore_priority_fee="$_val" ;;
+            ora_node_url) ora_node_url="$_val" ;;
+            ora_api_token) ora_api_token="$_val" ;;
+            mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
+            mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+        esac
+    done < "$_rcf"
+}
+
 if [ -f /opt/frynet-config/config.txt ]; then
-    . /opt/frynet-config/config.txt
+    read_config /opt/frynet-config/config.txt
     # Default password to "x" if not set
     [ -z "$password" ] && password="x"
     # Default CPU mining to true, GPU mining to false, USB ASIC mining to false
@@ -6724,8 +6746,10 @@ if [ -f /opt/frynet-config/config.txt ]; then
     [ -z "$ore_priority_fee" ] && ore_priority_fee=""
     [ -z "$ora_node_url" ] && ora_node_url=""
     [ -z "$ora_api_token" ] && ora_api_token=""
-    printf '{"miner":"%s","wallet":"%s","doge_wallet":"%s","worker":"%s","threads":"%s","pool":"%s","password":"%s","cpu_mining":"%s","gpu_mining":"%s","gpu_miner":"%s","usbasic_mining":"%s","usbasic_algo":"%s","ore_keypair":"%s","ore_rpc":"%s","ore_priority_fee":"%s","ora_node_url":"%s","ora_api_token":"%s"}' \
-        "$miner" "$wallet" "$doge_wallet" "$worker" "$threads" "$pool" "$password" "$cpu_mining" "$gpu_mining" "$gpu_miner" "$usbasic_mining" "$usbasic_algo" "$ore_keypair" "$ore_rpc" "$ore_priority_fee" "$ora_node_url" "$ora_api_token"
+    [ -z "$mysterium_donation_enabled" ] && mysterium_donation_enabled="false"
+    [ -z "$mysterium_donation_disclosed" ] && mysterium_donation_disclosed="false"
+    printf '{"miner":"%s","wallet":"%s","doge_wallet":"%s","worker":"%s","threads":"%s","pool":"%s","password":"%s","cpu_mining":"%s","gpu_mining":"%s","gpu_miner":"%s","usbasic_mining":"%s","usbasic_algo":"%s","ore_keypair":"%s","ore_rpc":"%s","ore_priority_fee":"%s","ora_node_url":"%s","ora_api_token":"%s","mysterium_donation_enabled":"%s","mysterium_donation_disclosed":"%s"}' \
+        "$miner" "$wallet" "$doge_wallet" "$worker" "$threads" "$pool" "$password" "$cpu_mining" "$gpu_mining" "$gpu_miner" "$usbasic_mining" "$usbasic_algo" "$ore_keypair" "$ore_rpc" "$ore_priority_fee" "$ora_node_url" "$ora_api_token" "$mysterium_donation_enabled" "$mysterium_donation_disclosed"
 else
     echo "{}"
 fi
@@ -7039,34 +7063,64 @@ echo ""
 PID_FILE="/opt/frynet-config/miner.pid"
 LOG_FILE="/opt/frynet-config/logs/miner.log"
 
+# Safe config parser — reads only allowlisted keys. Never evals arbitrary shell.
+read_config() {
+    _rcf="${1:-/opt/frynet-config/config.txt}"
+    [ -f "$_rcf" ] || return 1
+    while IFS='=' read -r _key _val; do
+        case "$_key" in ''|'#'*) continue ;; esac
+        case "$_key" in
+            miner) miner="$_val" ;;
+            wallet) wallet="$_val" ;;
+            doge_wallet) doge_wallet="$_val" ;;
+            ltc_wallet) ltc_wallet="$_val" ;;
+            worker) worker="$_val" ;;
+            threads) threads="$_val" ;;
+            pool) pool="$_val" ;;
+            password) password="$_val" ;;
+            cpu_mining) cpu_mining="$_val" ;;
+            gpu_mining) gpu_mining="$_val" ;;
+            gpu_miner) gpu_miner="$_val" ;;
+            usbasic_mining) usbasic_mining="$_val" ;;
+            usbasic_algo) usbasic_algo="$_val" ;;
+            ore_keypair) ore_keypair="$_val" ;;
+            ore_rpc) ore_rpc="$_val" ;;
+            ore_priority_fee) ore_priority_fee="$_val" ;;
+            ora_node_url) ora_node_url="$_val" ;;
+            ora_api_token) ora_api_token="$_val" ;;
+            mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
+            mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+        esac
+    done < "$_rcf"
+}
+
 if [ ! -f /opt/frynet-config/config.txt ]; then
     echo "<div class='error'>❌ No configuration found. Please save configuration first.</div>"
     exit 0
 fi
 
-. /opt/frynet-config/config.txt
-
-# Stop any existing miners first
-pkill -9 -f "xmrig" 2>/dev/null || true
-pkill -9 -f "xlarig" 2>/dev/null || true
-pkill -9 -f "cpuminer" 2>/dev/null || true
-pkill -9 -f "minerd" 2>/dev/null || true
-# USB ASIC miners
-pkill -9 -f "bfgminer" 2>/dev/null || true
-pkill -9 -f "cgminer" 2>/dev/null || true
-rm -f "$PID_FILE" 2>/dev/null
-sleep 2
+read_config /opt/frynet-config/config.txt
 
 SCRIPT_FILE="/opt/frynet-config/output/$miner/start.sh"
 if [ -f "$SCRIPT_FILE" ]; then
     # Clear old log and mark start time
     echo "[$(date)] Starting $miner mining..." > "$LOG_FILE"
 
-    # Start miner - script handles its own logging via tee
-    nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-    MINER_PID=$!
-    echo "$MINER_PID" > "$PID_FILE"
-    chmod 666 "$PID_FILE"
+    # Critical section: stop old, clear state, spawn miner, write PID atomically
+    flock -x -o /opt/frynet-config/miner.lock -c '
+        pkill -9 -f "xmrig" 2>/dev/null || true
+        pkill -9 -f "xlarig" 2>/dev/null || true
+        pkill -9 -f "cpuminer" 2>/dev/null || true
+        pkill -9 -f "minerd" 2>/dev/null || true
+        pkill -9 -f "bfgminer" 2>/dev/null || true
+        pkill -9 -f "cgminer" 2>/dev/null || true
+        rm -f "'"$PID_FILE"'"
+        rm -f /opt/frynet-config/stopped
+        nohup sh "'"$SCRIPT_FILE"'" >/dev/null 2>&1 &
+        MINER_PID=$!
+        echo "$MINER_PID" > "'"$PID_FILE"'"
+        chmod 644 "'"$PID_FILE"'"
+    '
 
     # Wait for miner to initialize
     sleep 4
@@ -7120,50 +7174,96 @@ PID_FILE="/opt/frynet-config/miner.pid"
 STOP_FILE="/opt/frynet-config/stopped"
 LOG_FILE="/opt/frynet-config/logs/miner.log"
 
-# Mark that we're stopping cleanly (not a crash)
-touch "$STOP_FILE"
-echo "[$(date)] Mining stopped by user" >> "$LOG_FILE"
+(
+    flock -x 9
+    # Mark that we're stopping cleanly (not a crash)
+    touch "$STOP_FILE"
+    echo "[$(date)] Mining stopped by user" >> "$LOG_FILE"
 
-# Check if we can use sudo
-CAN_SUDO=false
-if sudo -n true 2>/dev/null; then
-    CAN_SUDO=true
-fi
+    # Check if we can use sudo
+    CAN_SUDO=false
+    if sudo -n true 2>/dev/null; then
+        CAN_SUDO=true
+    fi
 
-# Kill by PID file first
+    # Kill tracked miner PIDs from dedicated PID files
+    for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                if [ "$CAN_SUDO" = "true" ]; then
+                    sudo kill -TERM "$_tpid" 2>/dev/null || true
+                else
+                    kill -TERM "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+    sleep 1
+    for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                if [ "$CAN_SUDO" = "true" ]; then
+                    sudo kill -KILL "$_tpid" 2>/dev/null || true
+                else
+                    kill -KILL "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+    rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
+
+    # Kill the shell script PID (miner.pid)
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$PID" ]; then
+            if [ "$CAN_SUDO" = "true" ]; then
+                sudo kill -KILL "$PID" 2>/dev/null || true
+            else
+                kill -KILL "$PID" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+) 9>/opt/frynet-config/miner.lock
+
+# Second pass: catch PID file written by a concurrent start.cgi
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$PID" ]; then
-        if [ "$CAN_SUDO" = "true" ]; then
-            sudo kill "$PID" 2>/dev/null || true
-            sleep 1
-            sudo kill -9 "$PID" 2>/dev/null || true
-        else
-            kill "$PID" 2>/dev/null || true
-            sleep 1
-            kill -9 "$PID" 2>/dev/null || true
-        fi
+        kill -KILL "$PID" 2>/dev/null || true
     fi
     rm -f "$PID_FILE"
 fi
 
-# Also kill any stray miners
+# Fallback: specific pkill with full binary paths
 if [ "$CAN_SUDO" = "true" ]; then
-    sudo pkill -9 -f xmrig 2>/dev/null || true
-    sudo pkill -9 -f xlarig 2>/dev/null || true
-    sudo pkill -9 -f cpuminer 2>/dev/null || true
-    sudo pkill -9 -f minerd 2>/dev/null || true
-    # USB ASIC miners
-    sudo pkill -9 -f bfgminer 2>/dev/null || true
-    sudo pkill -9 -f cgminer 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/xmrig 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/xlarig 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/cpuminer 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/minerd 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/SRBMiner-MULTI 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/lolMiner 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/t-rex 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/bfgminer 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/cgminer 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/ccminer-verus 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/hellminer 2>/dev/null || true
+    sudo pkill -KILL -f /usr/local/bin/nheqminer 2>/dev/null || true
 else
-    pkill -9 -f xmrig 2>/dev/null || true
-    pkill -9 -f xlarig 2>/dev/null || true
-    pkill -9 -f cpuminer 2>/dev/null || true
-    pkill -9 -f minerd 2>/dev/null || true
-    # USB ASIC miners
-    pkill -9 -f bfgminer 2>/dev/null || true
-    pkill -9 -f cgminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/xmrig 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/xlarig 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/cpuminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/minerd 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/SRBMiner-MULTI 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/lolMiner 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/t-rex 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/bfgminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/cgminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/ccminer-verus 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/hellminer 2>/dev/null || true
+    pkill -KILL -f /usr/local/bin/nheqminer 2>/dev/null || true
 fi
 
 echo "<div class='success'>✅ Mining stopped</div>"
@@ -7238,326 +7338,13 @@ case "$ACTION" in
         ;;
         
     update)
-        # Clear old error
-        rm -f "$UPDATE_ERROR_FILE" 2>/dev/null
-        echo "running" > "$UPDATE_STATUS_FILE"
-        
-        # Background update process
-        (
-            # Log to BOTH update log AND miner log (Activity tab)
-            echo "" >> "$MINER_LOG"
-            echo "========================================" >> "$MINER_LOG"
-            echo "[$(date)] 🔄 SOFTWARE UPDATE STARTED" >> "$MINER_LOG"
-            echo "========================================" >> "$MINER_LOG"
-            echo "[$(date)] === Force update started ===" >> "$UPDATE_LOG"
-            
-            # Check if miner is running and stop it for update
-            WAS_MINING=false
-            MINER_COIN=""
-            if [ -f "$PID_FILE" ]; then
-                OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
-                if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-                    WAS_MINING=true
-                    echo "[$(date)] ⚠️  Stopping active miner for update..." >> "$MINER_LOG"
-                    echo "[$(date)] Stopping mining for update" >> "$UPDATE_LOG"
-
-                    # Create stop marker
-                    touch /opt/frynet-config/stopped 2>/dev/null
-
-                    # Stop all miners gracefully first
-                    pkill -TERM -f "xmrig" 2>/dev/null || true
-                    pkill -TERM -f "xlarig" 2>/dev/null || true
-                    pkill -TERM -f "cpuminer" 2>/dev/null || true
-                    pkill -TERM -f "SRBMiner-MULTI" 2>/dev/null || true
-                    pkill -TERM -f "lolMiner" 2>/dev/null || true
-                    pkill -TERM -f "t-rex" 2>/dev/null || true
-                    pkill -TERM -f "bfgminer" 2>/dev/null || true
-                    pkill -TERM -f "cgminer" 2>/dev/null || true
-
-                    # Wait for graceful shutdown
-                    sleep 3
-
-                    # Force kill any remaining
-                    pkill -9 -f "xmrig" 2>/dev/null || true
-                    pkill -9 -f "xlarig" 2>/dev/null || true
-                    pkill -9 -f "cpuminer" 2>/dev/null || true
-                    pkill -9 -f "SRBMiner-MULTI" 2>/dev/null || true
-                    pkill -9 -f "lolMiner" 2>/dev/null || true
-                    pkill -9 -f "t-rex" 2>/dev/null || true
-                    pkill -9 -f "bfgminer" 2>/dev/null || true
-                    pkill -9 -f "cgminer" 2>/dev/null || true
-
-                    sleep 2
-                    echo "[$(date)] ✅ Mining stopped" >> "$MINER_LOG"
-                fi
-            fi
-
-            # Get miner coin from config
-            if [ -f "$CONFIG_FILE" ]; then
-                . "$CONFIG_FILE"
-                MINER_COIN="$miner"
-                cp "$CONFIG_FILE" "$CONFIG_BACKUP"
-                echo "[$(date)] ✅ Config backed up (mining $MINER_COIN)" >> "$MINER_LOG"
-                echo "[$(date)] Config backed up (mining $MINER_COIN)" >> "$UPDATE_LOG"
-            fi
-            
-            # Download new version
-            TEMP_SCRIPT="/tmp/fryminer_update_$$.sh"
-            echo "[$(date)] ⬇️  Downloading from GitHub..." >> "$MINER_LOG"
-            echo "[$(date)] Downloading update..." >> "$UPDATE_LOG"
-            
-            DOWNLOAD_ERROR=""
-            if command -v curl >/dev/null 2>&1; then
-                if ! curl -sL --connect-timeout 10 --max-time 120 -o "$TEMP_SCRIPT" "$DOWNLOAD_URL" 2>&1; then
-                    DOWNLOAD_ERROR="curl failed"
-                fi
-            else
-                if ! wget -q --timeout=120 -O "$TEMP_SCRIPT" "$DOWNLOAD_URL" 2>&1; then
-                    DOWNLOAD_ERROR="wget failed"
-                fi
-            fi
-            
-            if [ ! -s "$TEMP_SCRIPT" ]; then
-                ERROR_MSG="Download failed - check network connection"
-                echo "[$(date)] ❌ ERROR: $ERROR_MSG" >> "$MINER_LOG"
-                echo "[$(date)] ERROR: $ERROR_MSG" >> "$UPDATE_LOG"
-                echo "$ERROR_MSG" > "$UPDATE_ERROR_FILE"
-                echo "failed" > "$UPDATE_STATUS_FILE"
-                exit 1
-            fi
-            
-            # Get new version
-            NEW_VER=$(get_remote_version)
-            if [ -z "$NEW_VER" ]; then
-                ERROR_MSG="Cannot fetch version from GitHub"
-                echo "[$(date)] ❌ ERROR: $ERROR_MSG" >> "$MINER_LOG"
-                echo "$ERROR_MSG" > "$UPDATE_ERROR_FILE"
-                echo "failed" > "$UPDATE_STATUS_FILE"
-                rm -f "$TEMP_SCRIPT"
-                exit 1
-            fi
-            
-            echo "[$(date)] 📦 Installing version $NEW_VER..." >> "$MINER_LOG"
-            echo "[$(date)] Installing version $NEW_VER..." >> "$UPDATE_LOG"
-            
-            # Run the update script
-            chmod +x "$TEMP_SCRIPT"
-            
-            # Check if we can use sudo without password OR if we're already root
-            CURRENT_USER=$(whoami)
-            CURRENT_UID=$(id -u)
-            echo "[$(date)] 🔍 Running as user: $CURRENT_USER (UID: $CURRENT_UID)" >> "$MINER_LOG"
-            
-            CAN_SUDO=false
-            IS_ROOT=false
-            
-            # Check if already root
-            if [ "$CURRENT_UID" = "0" ] || [ "$CURRENT_USER" = "root" ]; then
-                IS_ROOT=true
-                CAN_SUDO=true
-                echo "[$(date)] ✅ Running as root - no sudo needed" >> "$MINER_LOG"
-            elif sudo -n true 2>/dev/null; then
-                CAN_SUDO=true
-                echo "[$(date)] ✅ Sudo access confirmed for $CURRENT_USER" >> "$MINER_LOG"
-            else
-                SUDO_ERROR=$(sudo -n true 2>&1)
-                echo "[$(date)] ⚠️  No passwordless sudo for $CURRENT_USER" >> "$MINER_LOG"
-                echo "[$(date)] Sudo error: $SUDO_ERROR" >> "$MINER_LOG"
-                
-                # Check if sudoers file exists
-                if [ -f /etc/sudoers.d/fryminer ]; then
-                    echo "[$(date)] ℹ️  Sudoers file exists at /etc/sudoers.d/fryminer" >> "$MINER_LOG"
-                else
-                    echo "[$(date)] ⚠️  Sudoers file missing: /etc/sudoers.d/fryminer" >> "$MINER_LOG"
-                fi
-                
-                # Try to detect if we can still run - check file permissions
-                if [ -w /opt/frynet-config ] && [ -w /usr/local/bin ]; then
-                    echo "[$(date)] ℹ️  Have write access to key directories, proceeding without sudo" >> "$MINER_LOG"
-                    CAN_SUDO=true  # Pretend we have sudo since we have write access
-                fi
-            fi
-            
-            # Run installation with output streaming to logs
-            echo "[$(date)] === Beginning installation ===" >> "$UPDATE_LOG"
-            echo "[$(date)] 📦 Running setup script..." >> "$MINER_LOG"
-            
-            INSTALL_SUCCESS=false
-            INSTALL_EXIT=1
-            
-            if [ "$IS_ROOT" = "true" ]; then
-                echo "[$(date)] Running directly as root..." >> "$UPDATE_LOG"
-                # Run directly without sudo since we're already root
-                if UPDATE_MODE=true sh "$TEMP_SCRIPT" >> "$UPDATE_LOG" 2>&1; then
-                    INSTALL_EXIT=0
-                    INSTALL_SUCCESS=true
-                else
-                    INSTALL_EXIT=$?
-                fi
-            elif [ "$CAN_SUDO" = "true" ]; then
-                echo "[$(date)] Running with sudo..." >> "$UPDATE_LOG"
-                # Stream output to both logs
-                if UPDATE_MODE=true sudo -E sh "$TEMP_SCRIPT" >> "$UPDATE_LOG" 2>&1; then
-                    INSTALL_EXIT=0
-                    INSTALL_SUCCESS=true
-                else
-                    INSTALL_EXIT=$?
-                fi
-            else
-                echo "[$(date)] Running without sudo (may fail)..." >> "$UPDATE_LOG"
-                # Stream output to both logs
-                if UPDATE_MODE=true sh "$TEMP_SCRIPT" >> "$UPDATE_LOG" 2>&1; then
-                    INSTALL_EXIT=0
-                    INSTALL_SUCCESS=true
-                else
-                    INSTALL_EXIT=$?
-                fi
-            fi
-            
-            echo "[$(date)] Installation script exit code: $INSTALL_EXIT" >> "$UPDATE_LOG"
-            
-            if [ "$INSTALL_SUCCESS" = "true" ]; then
-                echo "[$(date)] ✅ Installation completed successfully" >> "$MINER_LOG"
-                echo "[$(date)] Installation completed successfully" >> "$UPDATE_LOG"
-            else
-                # Failure - get last errors from update log
-                LAST_ERRORS=$(tail -30 "$UPDATE_LOG" 2>/dev/null | grep -E "ERROR|error|failed|Failed|CRITICAL|die" | tail -10)
-                if [ -z "$LAST_ERRORS" ]; then
-                    LAST_ERRORS=$(tail -20 "$UPDATE_LOG" 2>/dev/null)
-                fi
-                
-                # Create detailed error message
-                ERROR_MSG="Installation script failed (exit $INSTALL_EXIT)"
-                
-                echo "[$(date)] ❌ ERROR: $ERROR_MSG" >> "$MINER_LOG"
-                echo "[$(date)] ERROR: $ERROR_MSG" >> "$UPDATE_LOG"
-                echo "[$(date)] === Last errors from installation ===" >> "$MINER_LOG"
-                echo "$LAST_ERRORS" >> "$MINER_LOG"
-                
-                # Store short error for UI based on error type
-                if echo "$LAST_ERRORS" | grep -qi "XMRig installation failed"; then
-                    echo "XMRig installation failed - check update logs for details" > "$UPDATE_ERROR_FILE"
-                elif echo "$LAST_ERRORS" | grep -qi "cpuminer installation failed"; then
-                    echo "cpuminer installation failed - check update logs for details" > "$UPDATE_ERROR_FILE"
-                elif echo "$LAST_ERRORS" | grep -qi "Run as root"; then
-                    echo "Requires root - SSH in and run: sudo ./setup_fryminer_web.sh" > "$UPDATE_ERROR_FILE"
-                elif echo "$LAST_ERRORS" | grep -qi "password is required\|terminal is required"; then
-                    echo "First-time setup required - SSH in and run: sudo ./setup_fryminer_web.sh" > "$UPDATE_ERROR_FILE"
-                elif echo "$LAST_ERRORS" | grep -qi "permission denied"; then
-                    echo "Permission denied - SSH in and run: sudo ./setup_fryminer_web.sh" > "$UPDATE_ERROR_FILE"
-                elif echo "$LAST_ERRORS" | grep -qi "cmake.*failed"; then
-                    echo "Build tools missing - SSH in and run: sudo ./setup_fryminer_web.sh" > "$UPDATE_ERROR_FILE"
-                else
-                    echo "Installation failed - check update logs for details" > "$UPDATE_ERROR_FILE"
-                fi
-                
-                echo "failed" > "$UPDATE_STATUS_FILE"
-                
-                # CRITICAL: Restart mining even if update failed!
-                # The update killed the miner, so we must restart it regardless
-                if [ "$WAS_MINING" = "true" ] && [ -n "$MINER_COIN" ]; then
-                    SCRIPT_FILE="/opt/frynet-config/output/$MINER_COIN/start.sh"
-                    if [ -f "$SCRIPT_FILE" ]; then
-                        echo "[$(date)] 🔄 Update failed but miner was running - restarting $MINER_COIN mining..." >> "$MINER_LOG"
-                        echo "[$(date)] Restarting mining after failed update..." >> "$UPDATE_LOG"
-                        
-                        rm -f /opt/frynet-config/stopped 2>/dev/null
-                        
-                        if [ "$CAN_SUDO" = "true" ]; then
-                            sudo pkill -9 -f "xmrig" 2>/dev/null || true
-                            sudo pkill -9 -f "xlarig" 2>/dev/null || true
-                            sudo pkill -9 -f "cpuminer" 2>/dev/null || true
-                            sudo pkill -9 -f "ccminer" 2>/dev/null || true
-                            sudo pkill -9 -f "nheqminer" 2>/dev/null || true
-                            sudo pkill -9 -f "bfgminer" 2>/dev/null || true
-                            sudo pkill -9 -f "cgminer" 2>/dev/null || true
-                        else
-                            pkill -9 -f "xmrig" 2>/dev/null || true
-                            pkill -9 -f "xlarig" 2>/dev/null || true
-                            pkill -9 -f "cpuminer" 2>/dev/null || true
-                            pkill -9 -f "ccminer" 2>/dev/null || true
-                            pkill -9 -f "nheqminer" 2>/dev/null || true
-                            pkill -9 -f "bfgminer" 2>/dev/null || true
-                            pkill -9 -f "cgminer" 2>/dev/null || true
-                        fi
-                        
-                        sleep 2
-                        nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-                        RESTART_PID=$!
-                        echo "$RESTART_PID" > "$PID_FILE"
-                        echo "[$(date)] ✅ Mining restarted PID $RESTART_PID (using previous version)" >> "$MINER_LOG"
-                        echo "[$(date)] Mining restarted PID $RESTART_PID (previous version)" >> "$UPDATE_LOG"
-                    else
-                        echo "[$(date)] ⚠️  Cannot restart mining - start script missing: $SCRIPT_FILE" >> "$MINER_LOG"
-                        echo "[$(date)] Please click 'Save' in Settings to regenerate and restart" >> "$MINER_LOG"
-                    fi
-                fi
-                
-                rm -f "$TEMP_SCRIPT"
-                exit 1
-            fi
-            
-            rm -f "$TEMP_SCRIPT" 2>/dev/null
-            
-            # Restore config
-            if [ -f "$CONFIG_BACKUP" ]; then
-                cp "$CONFIG_BACKUP" "$CONFIG_FILE"
-                echo "[$(date)] ✅ Config restored" >> "$MINER_LOG"
-                echo "[$(date)] Config restored" >> "$UPDATE_LOG"
-            fi
-            
-            # Update version file
-            if [ -n "$NEW_VER" ]; then
-                echo "$NEW_VER" > "$VERSION_FILE"
-                echo "[$(date)] ✅ Version updated to: $NEW_VER" >> "$MINER_LOG"
-                echo "[$(date)] Version set to: $NEW_VER" >> "$UPDATE_LOG"
-            fi
-            
-            # Restart mining if it was running
-            if [ "$WAS_MINING" = "true" ] && [ -n "$MINER_COIN" ]; then
-                SCRIPT_FILE="/opt/frynet-config/output/$MINER_COIN/start.sh"
-                if [ -f "$SCRIPT_FILE" ]; then
-                    echo "[$(date)] 🔄 Restarting $MINER_COIN mining..." >> "$MINER_LOG"
-                    echo "[$(date)] Restarting $MINER_COIN mining..." >> "$UPDATE_LOG"
-
-                    # Use sudo if available
-                    if [ "$CAN_SUDO" = "true" ]; then
-                        sudo pkill -9 -f "xmrig" 2>/dev/null || true
-                        sudo pkill -9 -f "xlarig" 2>/dev/null || true
-                        sudo pkill -9 -f "cpuminer" 2>/dev/null || true
-                        # USB ASIC miners
-                        sudo pkill -9 -f "bfgminer" 2>/dev/null || true
-                        sudo pkill -9 -f "cgminer" 2>/dev/null || true
-                    else
-                        pkill -9 -f "xmrig" 2>/dev/null || true
-                        pkill -9 -f "xlarig" 2>/dev/null || true
-                        pkill -9 -f "cpuminer" 2>/dev/null || true
-                        # USB ASIC miners
-                        pkill -9 -f "bfgminer" 2>/dev/null || true
-                        pkill -9 -f "cgminer" 2>/dev/null || true
-                    fi
-
-                    sleep 2
-                    nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-                    NEW_PID=$!
-                    echo "$NEW_PID" > "$PID_FILE"
-                    echo "[$(date)] ✅ Mining restarted PID $NEW_PID" >> "$MINER_LOG"
-                    echo "[$(date)] Mining restarted PID $NEW_PID" >> "$UPDATE_LOG"
-                else
-                    echo "[$(date)] ⚠️  WARNING: Start script not found: $SCRIPT_FILE" >> "$MINER_LOG"
-                    echo "[$(date)] WARNING: Start script not found: $SCRIPT_FILE" >> "$UPDATE_LOG"
-                    echo "[$(date)] Mining was active but cannot auto-restart" >> "$MINER_LOG"
-                    echo "[$(date)] Please click 'Save' in Settings tab to regenerate start script" >> "$MINER_LOG"
-                fi
-            fi
-            
-            echo "[$(date)] ✅ UPDATE COMPLETE!" >> "$MINER_LOG"
-            echo "========================================" >> "$MINER_LOG"
-            echo "[$(date)] === Update completed ===" >> "$UPDATE_LOG"
-            echo "complete" > "$UPDATE_STATUS_FILE"
-        ) &
-        
-        printf '{"status":"started","message":"Update running in background"}'
+        # Web-triggered automatic updates are disabled for security.
+        # Remote scripts are no longer downloaded and executed automatically.
+        echo "[$(date)] Web-triggered updates are disabled pending signed/staged release infrastructure." >> "$MINER_LOG"
+        echo "[$(date)] Web-triggered updates are disabled pending signed/staged release infrastructure." >> "$UPDATE_LOG"
+        echo "Web-triggered updates are disabled for security. Please update manually by downloading the latest release from GitHub." > "$UPDATE_ERROR_FILE"
+        echo "disabled" > "$UPDATE_STATUS_FILE"
+        printf '{"status":"disabled","message":"Web updates are disabled pending signed/staged release infrastructure. Please update manually."}'
         ;;
         
     *)
@@ -7569,14 +7356,51 @@ SCRIPT
     
     # Create log files
     touch "$BASE/logs/miner.log"
-    chmod 666 "$BASE/logs/miner.log"
+    chmod 644 "$BASE/logs/miner.log"
     
     # Final permissions
-    chmod -R 777 "$BASE"
+    chmod -R 755 "$BASE"
+    chmod 640 "$BASE/config.txt" 2>/dev/null || true
+    chmod 644 "$BASE/logs/miner.log" 2>/dev/null || true
+    chmod 750 "$BASE/logs" 2>/dev/null || true
+    chmod 750 "$BASE/output" 2>/dev/null || true
     
     # Create and start systemd service for web interface (survives reboot)
     create_systemd_service
-    
+
+    # Fix runtime directory ownership for the web service user
+    # SERVICE_USER is set by create_systemd_service (global scope, no local keyword)
+    if [ -n "$SERVICE_USER" ] && [ "$SERVICE_USER" != "root" ]; then
+        SERVICE_GROUP=$(id -gn "$SERVICE_USER" 2>/dev/null || echo "$SERVICE_USER")
+
+        # BASE: root-owned, service user gets group rwx via SERVICE_GROUP
+        # Sticky bit protects root-owned static files (root owns dir, not service user)
+        chown root:"$SERVICE_GROUP" "$BASE"
+        chmod 1775 "$BASE"
+
+        # Writable subdirs: recursively owned by service user
+        # Recursive because output/ contains $MINER/ subdirs with start.sh scripts
+        # and pids/ contains *.pid files — all must be writable by service user
+        chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/output"
+        chmod 750 "$BASE/output"
+        chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/logs"
+        chmod 750 "$BASE/logs"
+
+        # Runtime files in BASE: fix ownership of any leftovers from prior root install
+        # or failed/partial runs. Without this, stop.cgi can't rm root-owned miner.pid,
+        # start.sh can't rm root-owned stopped, etc.
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/config.txt" 2>/dev/null || true
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/miner.pid" 2>/dev/null || true
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/stopped" 2>/dev/null || true
+        if [ -d "$BASE/pids" ]; then
+            chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/pids"
+        fi
+
+        # Protect root-owned static assets explicitly
+        chown root:root "$BASE/index.html" "$BASE/auto_update.sh" "$BASE/version.txt" 2>/dev/null || true
+        chown -R root:root "$BASE/cgi-bin"
+    fi
+
     # Get IP
     IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
     
