@@ -5758,7 +5758,9 @@ if [ -n "$OLD_MINER" ] && [ "$OLD_MINER" != "$MINER" ]; then
     fi
 fi
 
-cat > /opt/frynet-config/config.txt <<EOF
+(
+    flock -x 9
+    cat > /opt/frynet-config/config.txt <<EOF
 miner=$MINER
 wallet=$WALLET
 doge_wallet=$DOGE_WALLET
@@ -5780,7 +5782,8 @@ ora_api_token=$ORA_API_TOKEN
 mysterium_donation_enabled=${MYSTERIUM_ENABLED:-false}
 mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
 EOF
-chmod 640 /opt/frynet-config/config.txt
+    chmod 640 /opt/frynet-config/config.txt
+) 9>/opt/frynet-config/miner.lock
 
 SCRIPT_DIR="/opt/frynet-config/output/$MINER"
 mkdir -p "$SCRIPT_DIR"
@@ -7098,27 +7101,26 @@ fi
 
 read_config /opt/frynet-config/config.txt
 
-# Stop any existing miners first
-pkill -9 -f "xmrig" 2>/dev/null || true
-pkill -9 -f "xlarig" 2>/dev/null || true
-pkill -9 -f "cpuminer" 2>/dev/null || true
-pkill -9 -f "minerd" 2>/dev/null || true
-# USB ASIC miners
-pkill -9 -f "bfgminer" 2>/dev/null || true
-pkill -9 -f "cgminer" 2>/dev/null || true
-rm -f "$PID_FILE" 2>/dev/null
-sleep 2
-
 SCRIPT_FILE="/opt/frynet-config/output/$miner/start.sh"
 if [ -f "$SCRIPT_FILE" ]; then
     # Clear old log and mark start time
     echo "[$(date)] Starting $miner mining..." > "$LOG_FILE"
 
-    # Start miner - script handles its own logging via tee
-    nohup sh "$SCRIPT_FILE" >/dev/null 2>&1 &
-    MINER_PID=$!
-    echo "$MINER_PID" > "$PID_FILE"
-    chmod 644 "$PID_FILE"
+    # Critical section: stop old, clear state, spawn miner, write PID atomically
+    flock -x -o /opt/frynet-config/miner.lock -c '
+        pkill -9 -f "xmrig" 2>/dev/null || true
+        pkill -9 -f "xlarig" 2>/dev/null || true
+        pkill -9 -f "cpuminer" 2>/dev/null || true
+        pkill -9 -f "minerd" 2>/dev/null || true
+        pkill -9 -f "bfgminer" 2>/dev/null || true
+        pkill -9 -f "cgminer" 2>/dev/null || true
+        rm -f "'"$PID_FILE"'"
+        rm -f /opt/frynet-config/stopped
+        nohup sh "'"$SCRIPT_FILE"'" >/dev/null 2>&1 &
+        MINER_PID=$!
+        echo "$MINER_PID" > "'"$PID_FILE"'"
+        chmod 644 "'"$PID_FILE"'"
+    '
 
     # Wait for miner to initialize
     sleep 4
@@ -7172,53 +7174,65 @@ PID_FILE="/opt/frynet-config/miner.pid"
 STOP_FILE="/opt/frynet-config/stopped"
 LOG_FILE="/opt/frynet-config/logs/miner.log"
 
-# Mark that we're stopping cleanly (not a crash)
-touch "$STOP_FILE"
-echo "[$(date)] Mining stopped by user" >> "$LOG_FILE"
+(
+    flock -x 9
+    # Mark that we're stopping cleanly (not a crash)
+    touch "$STOP_FILE"
+    echo "[$(date)] Mining stopped by user" >> "$LOG_FILE"
 
-# Check if we can use sudo
-CAN_SUDO=false
-if sudo -n true 2>/dev/null; then
-    CAN_SUDO=true
-fi
+    # Check if we can use sudo
+    CAN_SUDO=false
+    if sudo -n true 2>/dev/null; then
+        CAN_SUDO=true
+    fi
 
-# Kill tracked miner PIDs from dedicated PID files
-for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
-    if [ -f "$_pidfile" ]; then
-        _tpid=$(cat "$_pidfile" 2>/dev/null)
-        if [ -n "$_tpid" ]; then
-            if [ "$CAN_SUDO" = "true" ]; then
-                sudo kill -TERM "$_tpid" 2>/dev/null || true
-            else
-                kill -TERM "$_tpid" 2>/dev/null || true
+    # Kill tracked miner PIDs from dedicated PID files
+    for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                if [ "$CAN_SUDO" = "true" ]; then
+                    sudo kill -TERM "$_tpid" 2>/dev/null || true
+                else
+                    kill -TERM "$_tpid" 2>/dev/null || true
+                fi
             fi
         fi
-    fi
-done
-sleep 1
-for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
-    if [ -f "$_pidfile" ]; then
-        _tpid=$(cat "$_pidfile" 2>/dev/null)
-        if [ -n "$_tpid" ]; then
-            if [ "$CAN_SUDO" = "true" ]; then
-                sudo kill -KILL "$_tpid" 2>/dev/null || true
-            else
-                kill -KILL "$_tpid" 2>/dev/null || true
+    done
+    sleep 1
+    for _pidfile in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                if [ "$CAN_SUDO" = "true" ]; then
+                    sudo kill -KILL "$_tpid" 2>/dev/null || true
+                else
+                    kill -KILL "$_tpid" 2>/dev/null || true
+                fi
             fi
         fi
-    fi
-done
-rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
+    done
+    rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
 
-# Kill the shell script PID (miner.pid)
+    # Kill the shell script PID (miner.pid)
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$PID" ]; then
+            if [ "$CAN_SUDO" = "true" ]; then
+                sudo kill -KILL "$PID" 2>/dev/null || true
+            else
+                kill -KILL "$PID" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+) 9>/opt/frynet-config/miner.lock
+
+# Second pass: catch PID file written by a concurrent start.cgi
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$PID" ]; then
-        if [ "$CAN_SUDO" = "true" ]; then
-            sudo kill -KILL "$PID" 2>/dev/null || true
-        else
-            kill -KILL "$PID" 2>/dev/null || true
-        fi
+        kill -KILL "$PID" 2>/dev/null || true
     fi
     rm -f "$PID_FILE"
 fi
