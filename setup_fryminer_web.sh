@@ -228,8 +228,8 @@ setup_auto_update() {
 # FryMiner Automatic Update Script
 # Runs daily via cron, preserves config, restarts mining
 
-REPO_API="https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main"
-DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh"
+REPO_API="https://api.github.com/repos/fry-networks/Fry-PoW-MultiMiner/commits/main"
+DOWNLOAD_URL="https://raw.githubusercontent.com/fry-networks/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh"
 VERSION_FILE="/opt/frynet-config/version.txt"
 CONFIG_FILE="/opt/frynet-config/config.txt"
 CONFIG_BACKUP="/opt/frynet-config/config.txt.backup"
@@ -243,9 +243,9 @@ log_msg() {
 # Get remote version (commit SHA)
 get_remote_version() {
     if command -v curl >/dev/null 2>&1; then
-        curl -s "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
+        curl -sL -A "FryMiner-UpdateCheck" --connect-timeout 5 --max-time 10 "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
+        wget -qO- --timeout=10 --header="User-Agent: FryMiner-UpdateCheck" "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
     fi
 }
 
@@ -291,9 +291,9 @@ AUTOUPDATE
     log "Fetching current version from GitHub..."
     CURRENT_VER=""
     if command -v curl >/dev/null 2>&1; then
-        CURRENT_VER=$(curl -s --connect-timeout 5 --max-time 10 "https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
+        CURRENT_VER=$(curl -sL -A "FryMiner-UpdateCheck" --connect-timeout 5 --max-time 10 "https://api.github.com/repos/fry-networks/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
     elif command -v wget >/dev/null 2>&1; then
-        CURRENT_VER=$(wget -qO- --timeout=10 "https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
+        CURRENT_VER=$(wget -qO- --timeout=10 --header="User-Agent: FryMiner-UpdateCheck" "https://api.github.com/repos/fry-networks/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
     fi
     
     if [ -n "$CURRENT_VER" ]; then
@@ -3489,7 +3489,7 @@ install_mystnodes() {
 
     local ARCH=$(uname -m)
     local SDK_BINARY=""
-    local DOWNLOAD_BASE="https://github.com/Fry-Foundation/Fry-PoW-MultiMiner/releases/download/mystnodes-sdk-v1.0.0"
+    local DOWNLOAD_BASE="https://github.com/fry-networks/Fry-PoW-MultiMiner/releases/download/mystnodes-sdk-v1.0.0"
 
     case "$ARCH" in
         x86_64|amd64)
@@ -3798,7 +3798,10 @@ RCLOCALEOF
     fi
     
     # Method 3: Try cron @reboot (universal fallback)
-    if command -v crontab >/dev/null 2>&1; then
+    # Guarded like Methods 2/4: an unguarded root @reboot entry runs the CGI
+    # server as root alongside the systemd unit's service user — root-created
+    # runtime files (miner.lock, config.txt) then break non-root saves.
+    if command -v crontab >/dev/null 2>&1 && [ "$BOOT_METHOD_SET" = "false" ]; then
         log "Setting up cron @reboot fallback..."
         
         # Get current crontab, remove old fryminer web entries
@@ -3810,6 +3813,12 @@ RCLOCALEOF
         crontab /tmp/crontab_web.tmp 2>/dev/null && log "✅ Cron @reboot fallback configured" || warn "Could not set up cron fallback"
         rm -f /tmp/crontab_web.tmp
         BOOT_METHOD_SET=true
+    elif command -v crontab >/dev/null 2>&1; then
+        # A primary boot method is active: drop stale fryminer @reboot entries
+        # from earlier installs so a root cron server doesn't fight it
+        (crontab -l 2>/dev/null || echo "") | grep -v "fryminer-web\|frynet-config.*http.server\|python3.*http.server.*$SERVICE_PORT" > /tmp/crontab_web.tmp 2>/dev/null || true
+        crontab /tmp/crontab_web.tmp 2>/dev/null || true
+        rm -f /tmp/crontab_web.tmp
     fi
     
     # Method 4: Create a startup script in /etc/init.d (SysV init fallback)
@@ -4492,7 +4501,7 @@ optgroup { background: #1a1a1a; color: #dc143c; }
             
             <div class="status-card" style="margin-top: 20px;">
                 <h3>About FryMiner</h3>
-                <p>Repository: <a href="https://github.com/Fry-Foundation/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">Fry-Foundation/Fry-PoW-MultiMiner</a></p>
+                <p>Repository: <a href="https://github.com/fry-networks/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">fry-networks/Fry-PoW-MultiMiner</a></p>
                 <p style="font-size: 0.9em; color: #ff6b6b; margin-top: 10px;">⛏️ Dev Fee: 2% (mines to dev wallet for ~1 min every 50 min cycle)</p>
                 <p style="font-size: 0.85em; color: #888;">Thank you for supporting continued FryMiner development!</p>
             </div>
@@ -4973,6 +4982,8 @@ document.getElementById('configForm').addEventListener('submit', function(e) {
         threadsInput.value = 1;
     }
 
+    document.getElementById('message').innerHTML = '<div class="info-box">💾 Saving configuration...</div>';
+
     const formData = new FormData(this);
     const params = new URLSearchParams();
     for (const [key, value] of formData) params.append(key, value);
@@ -5019,10 +5030,13 @@ document.getElementById('configForm').addEventListener('submit', function(e) {
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: params.toString()
     })
-    .then(r => r.text())
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(result => {
         document.getElementById('message').innerHTML = result;
         loadConfig();
+    })
+    .catch(err => {
+        document.getElementById('message').innerHTML = '<div class="error">❌ Save request failed: ' + err.message + '</div>';
     });
 });
 
@@ -5845,6 +5859,11 @@ mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
 EOF
     chmod 640 /opt/frynet-config/config.txt
 ) 9>/opt/frynet-config/miner.lock
+SAVE_STATUS=$?
+if [ "$SAVE_STATUS" -ne 0 ] || ! grep -q "^miner=" /opt/frynet-config/config.txt 2>/dev/null; then
+    echo "<div class='error'>❌ Failed to save configuration (exit $SAVE_STATUS). Could not write /opt/frynet-config/config.txt — check ownership/permissions of /opt/frynet-config/miner.lock and config.txt (they may be root-owned from an earlier install).</div>"
+    exit 0
+fi
 
 SCRIPT_DIR="/opt/frynet-config/output/$MINER"
 mkdir -p "$SCRIPT_DIR"
@@ -6404,7 +6423,7 @@ VERUS_DETECT
 EOF
 elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS --retry 10 --retry-pause 30 --timeout 300 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6617,7 +6636,7 @@ DEVVERUS_DETECT
 EOF
 elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retry 10 --retry-pause 30 --timeout 300 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6750,7 +6769,11 @@ done
 EOF
 
 chmod 755 "$SCRIPT_FILE"
-echo "<div class='success'>✅ Configuration saved for $MINER!</div>"
+if [ -s "$SCRIPT_FILE" ]; then
+    echo "<div class='success'>✅ Configuration saved for $MINER!</div>"
+else
+    echo "<div class='error'>❌ Configuration saved but failed to write start script ($SCRIPT_FILE). Check ownership of /opt/frynet-config/output.</div>"
+fi
 SCRIPT
     chmod 755 "$BASE/cgi-bin/save.cgi"
     
@@ -6948,7 +6971,23 @@ if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
         # Method 3: cpuminer format - various "123.45 kH/s" patterns
         HR=$(echo "$CLEAN_LOG" | grep -oE '[0-9]+\.?[0-9]* [kKMGT]?H/s' | tail -1)
     fi
-    
+
+    if [ -z "$HR" ]; then
+        # Method 4: cpuminer/cpuminer-multi native format - "45.67 khash/s"
+        # (lowercase units, not matched by the H/s patterns above)
+        HR_RAW=$(echo "$CLEAN_LOG" | grep -oiE '[0-9]+\.?[0-9]* [kmgt]?hash/s' | tail -1)
+        if [ -n "$HR_RAW" ]; then
+            HR=$(echo "$HR_RAW" | awk '{
+                val = $1; unit = tolower($2)
+                if (unit ~ /^khash/) printf "%.2f kH/s", val
+                else if (unit ~ /^mhash/) printf "%.2f MH/s", val
+                else if (unit ~ /^ghash/) printf "%.2f GH/s", val
+                else if (unit ~ /^thash/) printf "%.2f TH/s", val
+                else printf "%.2f H/s", val
+            }')
+        fi
+    fi
+
     [ -n "$HR" ] && HASHRATE="$HR"
     
     # ========== SHARES ==========
@@ -6962,14 +7001,16 @@ if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
     
     if [ "$SHARES" = "0" ]; then
         # Method 2: Count individual accepted lines (XMRig "net accepted" style)
-        ACC=$(echo "$CLEAN_LOG" | grep -c "net.*accepted" 2>/dev/null || echo "0")
-        [ "$ACC" -gt 0 ] && SHARES="$ACC"
+        # NOTE: no `|| echo 0` — grep -c already prints 0 on no match (while
+        # exiting 1), so `|| echo 0` yields "0<newline>0" and breaks [ -gt ]
+        ACC=$(echo "$CLEAN_LOG" | grep -c "net.*accepted" 2>/dev/null)
+        [ -n "$ACC" ] && [ "$ACC" -gt 0 ] 2>/dev/null && SHARES="$ACC"
     fi
-    
+
     if [ "$SHARES" = "0" ]; then
         # Method 3: cpuminer "accepted" or "yay!" lines
-        ACC=$(echo "$CLEAN_LOG" | grep -ciE "accepted|yay!" 2>/dev/null || echo "0")
-        [ "$ACC" -gt 0 ] && SHARES="$ACC"
+        ACC=$(echo "$CLEAN_LOG" | grep -ciE "accepted|yay!" 2>/dev/null)
+        [ -n "$ACC" ] && [ "$ACC" -gt 0 ] 2>/dev/null && SHARES="$ACC"
     fi
     
     # ========== REJECTED ==========
@@ -6984,8 +7025,10 @@ if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
     
     if [ "$REJECTED" = "0" ]; then
         # Method 2: Count reject lines
-        REJ=$(echo "$CLEAN_LOG" | grep -ciE "reject|booo" 2>/dev/null || echo "0")
-        REJECTED="$REJ"
+        # NOTE: no `|| echo 0` — grep -c already prints 0 on no match (while
+        # exiting 1), so `|| echo 0` yields "0<newline>0" and breaks $(( ))
+        REJ=$(echo "$CLEAN_LOG" | grep -ciE "reject|booo" 2>/dev/null)
+        [ -n "$REJ" ] && REJECTED="$REJ"
     fi
     
     # ========== ALGORITHM ==========
@@ -7169,12 +7212,19 @@ if [ -f "$SCRIPT_FILE" ]; then
 
     # Critical section: stop old, clear state, spawn miner, write PID atomically
     flock -x -o /opt/frynet-config/miner.lock -c '
-        pkill -9 -f "xmrig" 2>/dev/null || true
-        pkill -9 -f "xlarig" 2>/dev/null || true
-        pkill -9 -f "cpuminer" 2>/dev/null || true
-        pkill -9 -f "minerd" 2>/dev/null || true
-        pkill -9 -f "bfgminer" 2>/dev/null || true
-        pkill -9 -f "cgminer" 2>/dev/null || true
+        # pkill -x (exact comm match, no -f): this block runs via flock -c,
+        # so the entire script text is part of the executing shell cmdline.
+        # Any -f pattern naming a miner binary would match this very shell
+        # and SIGKILL it before the miner is spawned. -x matches only the
+        # process name (comm), which for this shell is sh. NOTE: this block
+        # is a single-quoted string — comments here must never contain
+        # apostrophes or quote characters.
+        pkill -9 -x xmrig 2>/dev/null || true
+        pkill -9 -x xlarig 2>/dev/null || true
+        pkill -9 -x cpuminer 2>/dev/null || true
+        pkill -9 -x minerd 2>/dev/null || true
+        pkill -9 -x bfgminer 2>/dev/null || true
+        pkill -9 -x cgminer 2>/dev/null || true
         rm -f "'"$PID_FILE"'"
         rm -f /opt/frynet-config/stopped
         nohup sh "'"$SCRIPT_FILE"'" >/dev/null 2>&1 &
@@ -7196,7 +7246,7 @@ if [ -f "$SCRIPT_FILE" ]; then
                     kill -KILL "$(cat "$MYST_PID_FILE")" 2>/dev/null
                     rm -f "$MYST_PID_FILE"
                 fi
-                pkill -f "sdk_client_myst" 2>/dev/null || true
+                pkill -x sdk_client_myst 2>/dev/null || true
                 sleep 1
 
                 # Start MystNodes SDK
@@ -7219,7 +7269,10 @@ if [ -f "$SCRIPT_FILE" ]; then
     RUNNING=false
 
     # Method 1: Check if our PID is still running
-    if kill -0 "$MINER_PID" 2>/dev/null; then
+    # (the flock -c block above runs in a child shell; MINER_PID does not
+    #  propagate back — read it from the PID file written at spawn time)
+    MINER_PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$MINER_PID" ] && kill -0 "$MINER_PID" 2>/dev/null; then
         RUNNING=true
     fi
 
@@ -7383,8 +7436,8 @@ echo "Content-type: application/json"
 echo ""
 
 ACTION="${QUERY_STRING:-check}"
-REPO_API="https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main"
-DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh"
+REPO_API="https://api.github.com/repos/fry-networks/Fry-PoW-MultiMiner/commits/main"
+DOWNLOAD_URL="https://raw.githubusercontent.com/fry-networks/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh"
 VERSION_FILE="/opt/frynet-config/version.txt"
 CONFIG_FILE="/opt/frynet-config/config.txt"
 CONFIG_BACKUP="/opt/frynet-config/config.txt.backup"
@@ -7394,13 +7447,53 @@ PID_FILE="/opt/frynet-config/miner.pid"
 UPDATE_STATUS_FILE="/opt/frynet-config/update_status.txt"
 UPDATE_ERROR_FILE="/opt/frynet-config/update_error.txt"
 
-# Get remote version (short commit SHA)
-get_remote_version() {
+CACHE_FILE="/opt/frynet-config/.update_cache"
+
+# Fetch remote HEAD sha. Sets REMOTE_SHA / FETCH_ERR globals — deliberately
+# NOT command substitution: $(...) runs in a subshell and FETCH_ERR would be lost.
+fetch_remote_version() {
+    REMOTE_SHA=""
+    FETCH_ERR=""
+    HTTP_CODE=""
+    BODY=""
     if command -v curl >/dev/null 2>&1; then
-        curl -s --connect-timeout 5 --max-time 10 "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
+        RESPONSE=$(curl -sL -A "FryMiner-UpdateCheck" --connect-timeout 5 --max-time 10 -w '\n%{http_code}' "$REPO_API" 2>/dev/null)
+        HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
+        BODY=$(printf '%s' "$RESPONSE" | sed '$d')
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --timeout=10 "$REPO_API" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7
+        BODY=$(wget -qO- --timeout=10 --header="User-Agent: FryMiner-UpdateCheck" "$REPO_API" 2>/dev/null)
+        if [ -n "$BODY" ]; then HTTP_CODE="200"; else HTTP_CODE="000"; fi
+    else
+        FETCH_ERR="curl/wget not installed"
+        return 1
     fi
+    case "$HTTP_CODE" in
+        200)
+            REMOTE_SHA=$(printf '%s' "$BODY" | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
+            if [ -n "$REMOTE_SHA" ]; then return 0; fi
+            FETCH_ERR="Unexpected GitHub API response"
+            return 1 ;;
+        403|429) FETCH_ERR="GitHub rate limit reached - retry later"; return 1 ;;
+        404)     FETCH_ERR="Repository not found (HTTP 404)"; return 1 ;;
+        000|"")  FETCH_ERR="Network error"; return 1 ;;
+        *)       FETCH_ERR="GitHub API error (HTTP $HTTP_CODE)"; return 1 ;;
+    esac
+}
+
+# Get remote version (short commit SHA), cached 15 min so page-load checks
+# don't burn the unauthenticated GitHub API quota. Sets REMOTE global.
+get_remote_version() {
+    REMOTE=""
+    if [ -f "$CACHE_FILE" ] && [ -n "$(find "$CACHE_FILE" -mmin -15 2>/dev/null)" ]; then
+        REMOTE=$(head -c 7 "$CACHE_FILE" 2>/dev/null)
+        [ -n "$REMOTE" ] && return 0
+    fi
+    if fetch_remote_version; then
+        REMOTE="$REMOTE_SHA"
+        printf '%s' "$REMOTE" > "$CACHE_FILE" 2>/dev/null || true
+        return 0
+    fi
+    return 1
 }
 
 # Get local version
@@ -7414,11 +7507,11 @@ get_local_version() {
 
 case "$ACTION" in
     check)
-        REMOTE=$(get_remote_version)
+        get_remote_version
         LOCAL=$(get_local_version)
-        
+
         if [ -z "$REMOTE" ]; then
-            printf '{"status":"error","message":"Network error","local":"%s","remote":"?"}' "$LOCAL"
+            printf '{"status":"error","message":"%s","local":"%s","remote":"?"}' "${FETCH_ERR:-Network error}" "$LOCAL"
         elif [ -z "$LOCAL" ] || [ "$LOCAL" = "unknown" ]; then
             printf '{"status":"available","local":"unknown","remote":"%s"}' "$REMOTE"
         elif [ "$REMOTE" != "$LOCAL" ]; then
@@ -7498,6 +7591,13 @@ SCRIPT
         chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/config.txt" 2>/dev/null || true
         chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/miner.pid" 2>/dev/null || true
         chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/stopped" 2>/dev/null || true
+        # Lock + cache files: pre-create so they are never first-created by a
+        # root-run fallback server. A root-owned miner.lock makes save.cgi's
+        # 9> redirect fail and the config write silently never happens.
+        touch "$BASE/miner.lock" "$BASE/.update_cache" 2>/dev/null || true
+        chown "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/miner.lock" "$BASE/.update_cache" 2>/dev/null || true
+        chmod 660 "$BASE/miner.lock" 2>/dev/null || true
+        chmod 664 "$BASE/.update_cache" 2>/dev/null || true
         if [ -d "$BASE/pids" ]; then
             chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/pids"
         fi
