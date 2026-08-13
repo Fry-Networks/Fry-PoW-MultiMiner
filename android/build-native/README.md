@@ -94,10 +94,45 @@ cmake --build build-arm64 -j"$(nproc)"
 llvm-strip build-arm64/xmrig-notls
 ```
 
-XLArig follows the same shape (it is an xmrig 5.x fork); cpuminer-multi and the
-VerusHash miner are autotools and are configured with
-`--host=aarch64-linux-android` / `--host=armv7a-linux-androideabi` using the NDK
-clang wrappers.
+## XLArig
+
+An xmrig 5.x fork, so the same recipe applies, with two differences that matter:
+
+```sh
+git clone --depth 1 --branch v5.2.4 https://github.com/scala-network/XLArig.git
+cd XLArig
+cmake -S . -B build-armv7 -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+  -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-24 \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG" \
+  -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG" \
+  -DCMAKE_EXE_LINKER_FLAGS="-L/build/stubs/armv7" \
+  -DARM_TARGET=7 -DBUILD_STATIC=OFF \
+  -DWITH_HWLOC=OFF -DWITH_TLS=OFF -DWITH_HTTP=ON \
+  -DWITH_OPENCL=OFF -DWITH_CUDA=OFF -DWITH_MSR=OFF -DWITH_ASM=ON \
+  -DUV_INCLUDE_DIR=/build/libuv/include \
+  -DUV_LIBRARY=/build/libuv/build-armeabi-v7a/libuv.a
+cmake --build build-armv7 -j"$(nproc)"
+```
+
+1. **Do not pass `-DWITH_RANDOMX=OFF`.** It defaults ON and is what pulls in
+   `src/crypto/randomx/panthera/*`. Turning it off silently drops panthera, which
+   is the only reason this fork exists.
+2. **Pass `-DARM_TARGET=7` explicitly for armeabi-v7a.** XLArig's `cpu.cmake` only
+   auto-sets it from a `CMAKE_SYSTEM_PROCESSOR` regex match, so relying on
+   auto-detection is fragile across NDK versions. On arm64 auto-detection from
+   `aarch64` is reliable. `ARM_V8`/`WITH_CUDA`/`WITH_OPENCL` are accepted but
+   unused here — this fork does not define those options.
+
+As with xmrig, RandomX gets a real JIT on arm64 and falls back to the portable
+interpreter on armeabi-v7a, so panthera hashes far slower on the 32-bit box.
+
+## cpuminer-multi and the VerusHash miner
+
+Both are autotools rather than CMake. Configure them with the NDK clang wrappers
+and `--host=aarch64-linux-android` / `--host=armv7a-linux-androideabi`, adding
+`-L/build/stubs/<abi>` to `LDFLAGS` if the pthread/rt link error appears.
 
 ## Verifying a build before shipping it
 
