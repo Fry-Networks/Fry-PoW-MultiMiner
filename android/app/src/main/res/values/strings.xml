@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FryPoW</string>
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_configure">Configure</string>
+    <string name="nav_log">Log</string>
+    <string name="nav_about">About</string>
+
+    <string name="mining_channel_name">Mining Status</string>
+    <string name="mining_channel_desc">Shows hashrate and pool while FryPoW is mining</string>
+    <string name="notif_stop">Stop</string>
+
+    <string name="dev_fee_disclosure">Dev fee: 2%. Mining runs on your wallet for 49 minutes of every 50, then on the developer wallet for 1 minute. Unmineable coins also carry the project referral code.</string>
+</resources>
