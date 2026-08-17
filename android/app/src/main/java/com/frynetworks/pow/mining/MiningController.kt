@@ -63,6 +63,13 @@ class MiningController(
             )
             return@withLock false
         }
+        if (!binaries.verifyExecutable(coin.family)) {
+            _state.value = MiningState.Unsupported(
+                "The ${coin.family.name.lowercase()} miner is bundled but will not run on this " +
+                    "device's CPU. Choose a coin that uses a different miner.",
+            )
+            return@withLock false
+        }
 
         _state.value = MiningState.Starting
         val newSession = MiningSession(binaries, logBuffer, lowMemory, ::onEvent)

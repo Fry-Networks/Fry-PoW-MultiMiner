@@ -38,7 +38,11 @@ class MiningService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            else -> resumeOrStart()
+            // Only an explicit press starts a fresh session.
+            ACTION_START -> startNow()
+            // A null intent is the sticky restart, and BOOT_COMPLETED arrives here
+            // too: resume only if mining was actually running when we were killed.
+            else -> resumeIfRequested()
         }
 
         acquireWakeLock()
@@ -46,11 +50,29 @@ class MiningService : Service() {
         return START_STICKY
     }
 
-    private fun resumeOrStart() {
+    private fun startNow() {
         container.scope.launch {
             if (container.miningController.isBusy) return@launch
-            val config = container.configRepository.config.first()
-            container.miningController.start(config)
+            container.miningController.start(container.configRepository.config.first())
+        }
+    }
+
+    /**
+     * Resume path for a sticky restart or a boot broadcast.
+     *
+     * Without the `miningRequested` gate the service mines the moment it is created,
+     * so merely opening the app - or booting the phone with auto-start off - would
+     * launch a miner the user never asked for.
+     */
+    private fun resumeIfRequested() {
+        container.scope.launch {
+            if (container.miningController.isBusy) return@launch
+            if (!container.configRepository.miningRequested.first()) {
+                stopForegroundCompat()
+                stopSelf()
+                return@launch
+            }
+            container.miningController.start(container.configRepository.config.first())
         }
     }
 
@@ -79,12 +101,24 @@ class MiningService : Service() {
                         )
                     }
 
-                    is MiningState.Idle, is MiningState.Error, is MiningState.Unsupported -> {
+                    is MiningState.Idle -> {
+                        // Only retire on Idle once a session has actually run: the
+                        // controller's initial value is Idle, and acting on it would
+                        // kill the service before start() reaches Starting.
                         if (wasActive) {
                             wasActive = false
                             stopForegroundCompat()
                             stopSelf()
                         }
+                    }
+
+                    is MiningState.Error, is MiningState.Unsupported -> {
+                        // Terminal regardless of whether mining ever began. A rejected
+                        // configuration must not leave the service resident holding an
+                        // ongoing notification the user cannot dismiss.
+                        wasActive = false
+                        stopForegroundCompat()
+                        stopSelf()
                     }
 
                     else -> Unit
