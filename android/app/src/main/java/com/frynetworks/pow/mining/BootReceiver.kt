@@ -15,8 +15,9 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         try {
+            // No action: the service takes its resume path and starts only if mining
+            // was actually running. ACTION_START here would mine unconditionally.
             val start = Intent(context, MiningService::class.java)
-                .setAction(MiningService.ACTION_START)
             context.startForegroundService(start)
             Log.i(MinerBinaries.TAG, "EVT=boot_autostart_requested")
         } catch (e: Exception) {

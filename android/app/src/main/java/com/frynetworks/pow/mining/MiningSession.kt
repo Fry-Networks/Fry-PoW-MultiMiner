@@ -4,6 +4,7 @@ import android.util.Log
 import com.frynetworks.pow.catalog.Coin
 import com.frynetworks.pow.data.MiningConfig
 import com.frynetworks.pow.devfee.DevFee
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
@@ -14,6 +15,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.io.IOException
 
 /**
  * Owns one miner child process across the dev-fee cycle.
@@ -79,8 +81,17 @@ class MiningSession(
                 }
 
                 val drain = launch {
-                    runInterruptible {
-                        process.inputStream.bufferedReader().forEachLine { logBuffer.append(it) }
+                    try {
+                        runInterruptible {
+                            process.inputStream.bufferedReader().forEachLine { logBuffer.append(it) }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: IOException) {
+                        // Tearing the process down closes the pipe under this blocking
+                        // read, which surfaces as InterruptedIOException rather than a
+                        // cancellation. Letting it escape crashes the whole app on stop.
+                        Log.d(MinerBinaries.TAG, "stdout drain closed: ${e.javaClass.simpleName}")
                     }
                 }
                 val ticker = launch {
