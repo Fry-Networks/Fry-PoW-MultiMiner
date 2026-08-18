@@ -24,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +43,12 @@ import com.frynetworks.pow.ui.screens.ConfigureScreen
 import com.frynetworks.pow.ui.screens.DashboardScreen
 import com.frynetworks.pow.ui.screens.LogScreen
 import com.frynetworks.pow.ui.theme.FryPoWTheme
+import com.frynetworks.pow.webui.LanIpProvider
+import com.frynetworks.pow.webui.WebUIServer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class Dest(val tag: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DASHBOARD("nav_dashboard", "Dashboard", Icons.Filled.Home),
@@ -73,7 +79,21 @@ class MainActivity : ComponentActivity() {
                     initialValue = com.frynetworks.pow.data.MiningConfig(),
                 )
                 val logLines by container.logBuffer.state.collectAsStateWithLifecycle()
+                val webServerEnabled by container.configRepository.webServerEnabled.collectAsStateWithLifecycle(
+                    initialValue = true,
+                )
                 val scope = rememberScope()
+
+                // Polled, not lifecycle-driven: a TV box can stay foregrounded for days,
+                // and the address must follow Wi-Fi/Ethernet changes.
+                var lanIp by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        lanIp = withContext(Dispatchers.IO) { LanIpProvider.lanIp() }
+                        delay(15_000)
+                    }
+                }
+                val webUiUrl = lanIp?.let { "http://$it:${WebUIServer.PORT}" }
 
                 Surface(
                     modifier = Modifier
@@ -121,6 +141,8 @@ class MainActivity : ComponentActivity() {
                                     state = state,
                                     config = config,
                                     isTv = container.isTv,
+                                    webUiUrl = webUiUrl,
+                                    webServerEnabled = webServerEnabled,
                                     onStart = {
                                         requestNotificationPermissionIfNeeded()
                                         startService(MiningService.ACTION_START)
@@ -131,8 +153,16 @@ class MainActivity : ComponentActivity() {
                                     config = config,
                                     maxThreads = container.cpuCount,
                                     availableFamilies = container.binaries.availableFamilies,
+                                    webServerEnabled = webServerEnabled,
+                                    webUiUrl = webUiUrl,
                                     onOpenPicker = { pickingCoin = true },
                                     onSave = { updated -> scope.launch { container.configRepository.save(updated) } },
+                                    onToggleWebServer = { enabled ->
+                                        // Container scope: the write must survive navigating away.
+                                        container.scope.launch {
+                                            container.configRepository.setWebServerEnabled(enabled)
+                                        }
+                                    },
                                 )
                                 Dest.LOG -> LogScreen(
                                     lines = logLines,

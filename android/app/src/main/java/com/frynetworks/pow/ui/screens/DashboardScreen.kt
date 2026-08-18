@@ -26,6 +26,7 @@ import com.frynetworks.pow.ui.components.StatTile
 import com.frynetworks.pow.ui.theme.Crimson
 import com.frynetworks.pow.ui.theme.Danger
 import com.frynetworks.pow.ui.theme.Muted
+import com.frynetworks.pow.ui.theme.Salmon
 import com.frynetworks.pow.ui.theme.Success
 import com.frynetworks.pow.ui.theme.Warning
 
@@ -34,6 +35,8 @@ fun DashboardScreen(
     state: MiningState,
     config: MiningConfig,
     isTv: Boolean,
+    webUiUrl: String?,
+    webServerEnabled: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -119,6 +122,24 @@ fun DashboardScreen(
                 style = MaterialTheme.typography.bodyMedium)
             Text("Difficulty: ${stats?.difficulty ?: "--"}", style = MaterialTheme.typography.bodyMedium)
             Text("Rejected: ${stats?.rejected ?: 0}", style = MaterialTheme.typography.bodyMedium)
+        }
+
+        FocusableCard(testTag = "card_webui") {
+            Text("Web Dashboard", style = MaterialTheme.typography.labelSmall, color = Muted)
+            Text(
+                if (webServerEnabled) "Web Dashboard: Active" else "Web Dashboard: Off",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (webServerEnabled) Success else Muted,
+                modifier = Modifier.testTag("txt_webui_state"),
+            )
+            if (webServerEnabled && webUiUrl != null) {
+                Text(
+                    webUiUrl,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Salmon,
+                    modifier = Modifier.testTag("txt_webui_url"),
+                )
+            }
         }
     }
 }
