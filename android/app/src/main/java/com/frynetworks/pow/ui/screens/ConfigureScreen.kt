@@ -30,6 +30,7 @@ import com.frynetworks.pow.data.MiningConfig
 import com.frynetworks.pow.ui.components.FocusableCard
 import com.frynetworks.pow.ui.components.FormField
 import com.frynetworks.pow.ui.components.StepperRow
+import com.frynetworks.pow.ui.components.ToggleRow
 import com.frynetworks.pow.ui.theme.Muted
 import com.frynetworks.pow.ui.theme.Success
 
@@ -38,8 +39,11 @@ fun ConfigureScreen(
     config: MiningConfig,
     maxThreads: Int,
     availableFamilies: Set<MinerFamily>,
+    webServerEnabled: Boolean,
+    webUiUrl: String?,
     onOpenPicker: () -> Unit,
     onSave: (MiningConfig) -> Unit,
+    onToggleWebServer: (Boolean) -> Unit,
 ) {
     var draft by remember(config) { mutableStateOf(config) }
     var errors by remember { mutableStateOf<List<ConfigError>>(emptyList()) }
@@ -153,6 +157,20 @@ fun ConfigureScreen(
                 modifier = Modifier.testTag("err_config"),
             )
         }
+
+        ToggleRow(
+            label = "Web Dashboard Server",
+            subtitle = "Access mining dashboard from any browser on your network",
+            checked = webServerEnabled,
+            onCheckedChange = onToggleWebServer,
+            testTag = "cfg_webui_toggle",
+        )
+        Text(
+            if (webServerEnabled) webUiUrl ?: "Waiting for network..." else "Disabled",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (webServerEnabled) Success else Muted,
+            modifier = Modifier.testTag("txt_webui_cfg_url"),
+        )
 
         if (coin?.group == CoinGroup.UNMINEABLE) {
             Text(

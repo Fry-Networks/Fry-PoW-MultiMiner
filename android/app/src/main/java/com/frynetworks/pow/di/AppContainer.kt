@@ -9,9 +9,13 @@ import com.frynetworks.pow.mining.MinerBinaries
 import com.frynetworks.pow.mining.MiningController
 import com.frynetworks.pow.mining.SessionPlanner
 import com.frynetworks.pow.update.UpdateRepository
+import com.frynetworks.pow.webui.WebUIServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /**
  * Hand-built dependency graph. The app has one repository, one controller and one
@@ -50,4 +54,33 @@ class AppContainer(context: Context) {
         lowMemory = lowMemory,
         scope = scope,
     )
+
+    /**
+     * Hosted here, not in MiningService: the service self-stops on Idle and the
+     * dashboard must stay reachable while mining is off. Constructing NanoHTTPD
+     * opens no socket; only start() binds.
+     */
+    val webUiServer = WebUIServer(
+        appContext = context.applicationContext,
+        configRepository = configRepository,
+        miningController = miningController,
+        maxThreads = cpuCount,
+    )
+
+    init {
+        scope.launch {
+            // distinctUntilChanged: DataStore re-emits on every preference write.
+            configRepository.webServerEnabled.distinctUntilChanged().collect { enabled ->
+                if (enabled) {
+                    if (!webUiServer.startSafely()) {
+                        // The port can linger in TIME_WAIT after a crash; one retry.
+                        delay(3_000)
+                        webUiServer.startSafely()
+                    }
+                } else {
+                    webUiServer.stopSafely()
+                }
+            }
+        }
+    }
 }

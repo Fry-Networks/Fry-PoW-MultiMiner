@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FryPoW — Web Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body data-page="dashboard">
+<div id="banner" hidden>Connection lost — retrying…</div>
+<header>
+  <h1>FryPoW</h1>
+  <div id="device" class="muted"></div>
+</header>
+<main>
+  <section class="card" id="state-card">
+    <div class="label">Status</div>
+    <div id="status-word">--</div>
+    <div id="coin-line" class="muted"></div>
+    <div id="detail" class="err" hidden></div>
+  </section>
+  <div class="grid">
+    <div class="tile"><div class="value" id="hashrate">--</div><div class="label">Hashrate</div></div>
+    <div class="tile"><div class="value" id="accepted">0</div><div class="label">Accepted</div></div>
+    <div class="tile"><div class="value" id="uptime">0h 0m</div><div class="label">Uptime</div></div>
+    <div class="tile"><div class="value" id="efficiency">100%</div><div class="label">Efficiency</div></div>
+  </div>
+  <section class="card">
+    <div class="label">Session</div>
+    <div class="row"><span>Algorithm</span><span id="algo">--</span></div>
+    <div class="row"><span>Pool</span><span id="pool">--</span></div>
+    <div class="row"><span>Worker</span><span id="worker">--</span></div>
+    <div class="row"><span>Difficulty</span><span id="difficulty">--</span></div>
+    <div class="row"><span>Rejected</span><span id="rejected">0</span></div>
+  </section>
+  <div class="actions">
+    <button id="btn-start">Start Mining</button>
+    <button id="btn-stop" class="danger" hidden>Stop Mining</button>
+  </div>
+  <p id="action-msg" class="err"></p>
+  <nav><a id="link-config" href="/config">Configuration →</a></nav>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

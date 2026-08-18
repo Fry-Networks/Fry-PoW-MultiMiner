@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FryPoW — Configuration</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body data-page="config">
+<div id="banner" hidden>Connection lost — retrying…</div>
+<header>
+  <h1>FryPoW</h1>
+  <div class="muted">Configuration</div>
+</header>
+<main>
+  <section class="card">
+    <form id="config-form">
+      <label for="coinId">Coin ID</label>
+      <input type="text" id="coinId" placeholder="e.g. xmr, verus, doge-lotto">
+      <div class="muted">Coin id as shown in the app's coin picker.</div>
+
+      <label for="wallet">Wallet address</label>
+      <input type="text" id="wallet" autocomplete="off" spellcheck="false">
+
+      <label for="dogeWallet">DOGE address (merged mining, optional)</label>
+      <input type="text" id="dogeWallet" autocomplete="off" spellcheck="false">
+
+      <label for="ltcWallet">LTC address (merged mining, optional)</label>
+      <input type="text" id="ltcWallet" autocomplete="off" spellcheck="false">
+
+      <label for="worker">Worker name</label>
+      <input type="text" id="worker">
+
+      <label for="threads">CPU threads</label>
+      <input type="number" id="threads" min="1" step="1">
+
+      <label for="pool">Pool</label>
+      <input type="text" id="pool" placeholder="pool.example.com:3333">
+
+      <label for="password">Pool password</label>
+      <input type="text" id="password">
+
+      <div class="check">
+        <input type="checkbox" id="startOnBoot">
+        <label for="startOnBoot">Start mining on boot</label>
+      </div>
+
+      <button id="btn-save" type="submit">Save configuration</button>
+      <p id="save-status"></p>
+      <ul id="field-errors"></ul>
+    </form>
+  </section>
+  <nav><a href="/">← Dashboard</a></nav>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

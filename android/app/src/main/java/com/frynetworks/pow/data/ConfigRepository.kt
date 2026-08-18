@@ -32,6 +32,7 @@ class ConfigRepository(context: Context) {
         val PASSWORD = stringPreferencesKey("password")
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
         val MINING_REQUESTED = booleanPreferencesKey("mining_requested")
+        val WEB_SERVER_ENABLED = booleanPreferencesKey("web_server_enabled")
     }
 
     private val defaults = MiningConfig()
@@ -69,5 +70,12 @@ class ConfigRepository(context: Context) {
 
     suspend fun setMiningRequested(requested: Boolean) {
         store.edit { it[Keys.MINING_REQUESTED] = requested }
+    }
+
+    /** Web dashboard; on by default, toggled only from the native Configure screen. */
+    val webServerEnabled: Flow<Boolean> = store.data.map { it[Keys.WEB_SERVER_ENABLED] ?: true }
+
+    suspend fun setWebServerEnabled(enabled: Boolean) {
+        store.edit { it[Keys.WEB_SERVER_ENABLED] = enabled }
     }
 }
