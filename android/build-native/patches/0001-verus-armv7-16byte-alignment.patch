@@ -1,0 +1,27 @@
+diff --git a/verus/verusscan.cpp b/verus/verusscan.cpp
+index ebec38d..45695ff 100644
+--- a/verus/verusscan.cpp
++++ b/verus/verusscan.cpp
+@@ -160,10 +160,11 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
+ 
+ 	uint32_t *pdata = work->data;
+ 	uint32_t *ptarget = work->target;
+-	uint8_t blockhash_half[64] = { 0 };
++	uint8_t blockhash_half[64] __attribute__((aligned(16))) = { 0 };
+ 	uint8_t gpuinit = 0;
+ 	struct timeval tv_start, tv_end;
+-	u128 *data_key =  (u128*)malloc(VERUS_KEY_SIZE + 1024);
++	u128 *data_key = NULL;
++	if (posix_memalign((void**)&data_key, 16, VERUS_KEY_SIZE + 1024) != 0) return 0;
+ 	u128 *data_key_prand = data_key + VERUS_KEY_SIZE128 ;
+ 	u128 *data_key_prandex = data_key + VERUS_KEY_SIZE128 + 32;
+ 
+@@ -172,7 +173,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
+ 	uint32_t fixrandex[32];
+ 
+ 	unsigned char block_41970[3] = { 0xfd, 0x40, 0x05};
+-	uint8_t  full_data[140 + 3 + 1344] = { 0 };
++	uint8_t  full_data[140 + 3 + 1344] __attribute__((aligned(16))) = { 0 };
+ 	uint8_t* sol_data = &full_data[140];
+ 
+ 	memcpy(full_data, pdata, 140);

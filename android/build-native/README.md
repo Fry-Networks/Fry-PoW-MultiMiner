@@ -5,8 +5,11 @@ They are unmodified upstream sources, cross-compiled for Android with the NDK.
 This directory documents exactly how, both so the build is reproducible and to
 satisfy the GPL obligation to make the corresponding source available.
 
-No upstream source file was patched. Everything below is toolchain and
-configure-flag level only.
+Everything below is toolchain and configure-flag level only, **except the
+armeabi-v7a VerusHash miner**, which needs a three-line alignment fix. That patch
+is committed verbatim at `patches/0001-verus-armv7-16byte-alignment.patch` and is
+the corresponding source for the binary we ship — see "VerusHash on 32-bit ARM"
+below.
 
 | Binary | Upstream | Tag built | Licence |
 |---|---|---|---|
@@ -133,6 +136,39 @@ interpreter on armeabi-v7a, so panthera hashes far slower on the 32-bit box.
 Both are autotools rather than CMake. Configure them with the NDK clang wrappers
 and `--host=aarch64-linux-android` / `--host=armv7a-linux-androideabi`, adding
 `-L/build/stubs/<abi>` to `LDFLAGS` if the pthread/rt link error appears.
+
+VerusHash is `monkins1010/ccminer` branch `Verus2.2` at commit `e28e183`, with its
+`verus/sse2neon` submodule. arm64 builds with `-march=armv8-a+crypto+aes`, which
+gives real AES instructions. armv7 builds with `-march=armv7-a -mfpu=neon
+-mfloat-abi=softfp -fno-strict-aliasing`.
+
+## VerusHash on 32-bit ARM
+
+The armeabi-v7a build needs `patches/0001-verus-armv7-16byte-alignment.patch`.
+Without it the miner dies the instant a worker thread starts:
+
+```
+Fatal signal 7 (SIGBUS), code 1 (BUS_ADRALN), fault addr 0xed402428
+```
+
+`scanhash_verus()` allocates its key buffer with plain `malloc` and casts it to
+`u128*` (`__m128i`, 16-byte aligned). On LP64 bionic `malloc` happens to return
+16-byte-aligned blocks so arm64 is fine, but **on ILP32 it only guarantees 8** —
+and the fault address above is 8 mod 16. The compiler, entitled to assume the
+declared alignment, emits NEON accesses carrying `:128` qualifiers, and the
+binary's `Tag_CPU_unaligned_access` covers plain LDR/STR only. The patch switches
+that allocation to `posix_memalign(..., 16, ...)` and marks the two stack buffers
+that feed the same hash core `__attribute__((aligned(16)))`.
+
+No compiler flag fixes this: `-mno-unaligned-access` changes scalar codegen only
+and does not affect NEON intrinsics or alignment inferred from a pointer's type.
+
+**Do not try to build armv7 with `-march=armv8-a+crypto`** even though the X96Q's
+Cortex-A53 reports `aes pmull` in `/proc/cpuinfo`. Defining `__ARM_FEATURE_CRYPTO`
+makes the pinned sse2neon take its hardware-CLMUL path, which calls `vmull_p64` —
+an intrinsic clang exposes only on AArch64 — and compilation fails. armv7
+therefore runs sse2neon's software AES, measured at **57 kH/s per thread** on the
+X96Q (`ccminer -a verus --benchmark -t 4`) versus hardware-AES speeds on arm64.
 
 ## Verifying a build before shipping it
 
