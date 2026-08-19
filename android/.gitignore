@@ -4,6 +4,8 @@ local.properties
 *.apk
 *.aab
 *.aar
+keystore/
+keystore.properties
 .cxx/
 .idea/
 *.iml
