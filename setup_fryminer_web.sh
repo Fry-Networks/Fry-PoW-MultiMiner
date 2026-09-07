@@ -2178,11 +2178,57 @@ install_verus_miner() {
                         chmod +x ccminer-prebuilt
                         
                         # Check architecture matches
+                        # NOTE: Oink70 releases label their aarch64 build "ARM" — it is
+                        # NOT ARMv7 32-bit. Without the armv7/armv6 branch below the
+                        # aarch64 binary silently installed on 32-bit ARM hosts and
+                        # died with "Exec format error" at first exec (root cause of
+                        # M3 armv7l FryNetworksb5d2 install regression).
                         case "$ARCH_TYPE" in
                             arm64)
                                 case "$FILE_TYPE" in
                                     *aarch64*|*ARM\ aarch64*|*64-bit*LSB*ARM*)
                                         log "  Architecture match: aarch64"
+                                        ;;
+                                    *)
+                                        warn "  Binary architecture mismatch for $ARCH_TYPE, skipping"
+                                        rm -f ccminer-prebuilt
+                                        return 1
+                                        ;;
+                                esac
+                                ;;
+                            armv7|armv6|armv5)
+                                case "$FILE_TYPE" in
+                                    *aarch64*|*ARM\ aarch64*|*64-bit*LSB*ARM*)
+                                        warn "  Binary is aarch64 but host is $ARCH_TYPE (32-bit ARM), skipping"
+                                        rm -f ccminer-prebuilt
+                                        return 1
+                                        ;;
+                                    *32-bit*LSB*ARM*|*ARM,\ EABI*|*ELF\ 32-bit\ LSB*ARM*)
+                                        log "  Architecture match: 32-bit ARM"
+                                        ;;
+                                    *)
+                                        warn "  Binary architecture unrecognized for $ARCH_TYPE ($FILE_TYPE), skipping"
+                                        rm -f ccminer-prebuilt
+                                        return 1
+                                        ;;
+                                esac
+                                ;;
+                            x86_64)
+                                case "$FILE_TYPE" in
+                                    *x86-64*|*x86_64*|*64-bit*LSB*x86-64*)
+                                        log "  Architecture match: x86_64"
+                                        ;;
+                                    *)
+                                        warn "  Binary architecture mismatch for $ARCH_TYPE, skipping"
+                                        rm -f ccminer-prebuilt
+                                        return 1
+                                        ;;
+                                esac
+                                ;;
+                            i386|i686|x86)
+                                case "$FILE_TYPE" in
+                                    *Intel\ 80386*|*32-bit*LSB*80386*|*i386*)
+                                        log "  Architecture match: x86 32-bit"
                                         ;;
                                     *)
                                         warn "  Binary architecture mismatch for $ARCH_TYPE, skipping"
