@@ -6831,16 +6831,36 @@ pool_reachable() {
     _pr_port="${_pr_hostport##*:}"
     [ -n "$_pr_host" ] || return 1
     case "$_pr_port" in ''|*[!0-9]*) return 1 ;; esac
-    # Prefer a real TCP probe; fall back to "assume reachable" if no tool exists
-    # so a missing utility can never strand the miner with no pool at all.
+
+    # python3 first: this start.sh always runs on a box whose web panel IS
+    # python3 -m http.server, so it is guaranteed present, whereas nc is not
+    # installed on a stock Armbian image. (An earlier version probed via
+    # $BASH_VERSION, which is always empty here because the script runs under
+    # dash — that silently turned every probe into "reachable" and made
+    # failover a no-op.)
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$_pr_host" "$_pr_port" <<'PYPROBE' >/dev/null 2>&1
+import socket, sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5).close()
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+PYPROBE
+        return $?
+    fi
     if command -v nc >/dev/null 2>&1; then
-        nc -z -w 5 "$_pr_host" "$_pr_port" >/dev/null 2>&1 && return 0
-        return 1
+        nc -z -w 5 "$_pr_host" "$_pr_port" >/dev/null 2>&1
+        return $?
     fi
-    if command -v timeout >/dev/null 2>&1 && [ -n "$BASH_VERSION" ]; then
-        timeout 5 bash -c "exec 3<>/dev/tcp/$_pr_host/$_pr_port" >/dev/null 2>&1 && return 0
-        return 1
+    if command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+        timeout 5 bash -c "exec 3<>/dev/tcp/$_pr_host/$_pr_port" >/dev/null 2>&1
+        return $?
     fi
+    # No probe tool at all: treat as reachable so a missing utility can never
+    # strand the miner with no pool. Failover is disabled in that case, which
+    # matches the pre-feature single-pool behaviour.
+    echo "[$(date)] No TCP probe tool available; pool failover disabled" >> "$LOG"
     return 0
 }
 
