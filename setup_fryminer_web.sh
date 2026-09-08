@@ -78,6 +78,12 @@ read_config() {
             ora_api_token) ora_api_token="$_val" ;;
             mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
             mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+            pool_fallback_1) pool_fallback_1="$_val" ;;
+            pool_fallback_2) pool_fallback_2="$_val" ;;
+            pool_fallback_3) pool_fallback_3="$_val" ;;
+            pool_fallback_4) pool_fallback_4="$_val" ;;
+            algo_mode) algo_mode="$_val" ;;
+            algorithm) algorithm="$_val" ;;
         esac
     done < "$_rcf"
 }
@@ -4133,11 +4139,15 @@ main() {
         mkdir -p "$BASE/logs"
     fi
     
+    # Saved named configurations (see listconfigs/saveconfig/loadconfig/deleteconfig CGIs)
+    mkdir -p "$BASE/saved_configs"
+
     # Set permissions
     chmod 755 "$BASE"
     chmod 755 "$BASE/cgi-bin"
     chmod 750 "$BASE/output"
     chmod 750 "$BASE/logs"
+    chmod 750 "$BASE/saved_configs"
     
     log "Creating web interface..."
     
@@ -5685,6 +5695,12 @@ ORA_NODE_URL=""
 ORA_API_TOKEN=""
 MYSTERIUM_ENABLED="false"
 MYSTERIUM_DISCLOSED="false"
+POOL_FALLBACK_1=""
+POOL_FALLBACK_2=""
+POOL_FALLBACK_3=""
+POOL_FALLBACK_4=""
+ALGO_MODE="false"
+ALGORITHM=""
 
 IFS='&'
 for param in $POST_DATA; do
@@ -5713,6 +5729,12 @@ for param in $POST_DATA; do
         ora_api_token) ORA_API_TOKEN="$value" ;;
         mysterium_donation_enabled) MYSTERIUM_ENABLED="$value" ;;
         mysterium_donation_disclosed) MYSTERIUM_DISCLOSED="$value" ;;
+        pool_fallback_1) POOL_FALLBACK_1="$value" ;;
+        pool_fallback_2) POOL_FALLBACK_2="$value" ;;
+        pool_fallback_3) POOL_FALLBACK_3="$value" ;;
+        pool_fallback_4) POOL_FALLBACK_4="$value" ;;
+        algo_mode) ALGO_MODE="$value" ;;
+        algorithm) ALGORITHM="$value" ;;
     esac
 done
 IFS=' '
@@ -5748,6 +5770,12 @@ ORE_KEYPAIR=$(sanitize_shell "$ORE_KEYPAIR")
 ORE_RPC=$(sanitize_url "$ORE_RPC")
 ORA_NODE_URL=$(sanitize_url "$ORA_NODE_URL")
 ORA_API_TOKEN=$(sanitize_shell "$ORA_API_TOKEN")
+POOL_FALLBACK_1=$(sanitize_shell "$POOL_FALLBACK_1")
+POOL_FALLBACK_2=$(sanitize_shell "$POOL_FALLBACK_2")
+POOL_FALLBACK_3=$(sanitize_shell "$POOL_FALLBACK_3")
+POOL_FALLBACK_4=$(sanitize_shell "$POOL_FALLBACK_4")
+ALGORITHM=$(sanitize_shell "$ALGORITHM")
+case "$ALGO_MODE" in true|false) ;; *) ALGO_MODE="false" ;; esac
 
 # ORE uses keypair path as wallet, ORA uses wallet address normally
 if [ "$MINER" = "ore" ] && [ -z "$WALLET" ]; then
@@ -5760,7 +5788,14 @@ if [ -z "$MINER" ] || [ -z "$WALLET" ]; then
 fi
 
 # STRIP any existing protocol prefix from pool URL (stratum, http, https)
-POOL=$(echo "$POOL" | sed 's|^stratum+tcp://||' | sed 's|^stratum+ssl://||' | sed 's|^stratum://||' | sed 's|^https\?://||')
+strip_pool_prefix() {
+    echo "$1" | sed 's|^stratum+tcp://||' | sed 's|^stratum+ssl://||' | sed 's|^stratum://||' | sed 's|^https\?://||'
+}
+POOL=$(strip_pool_prefix "$POOL")
+POOL_FALLBACK_1=$(strip_pool_prefix "$POOL_FALLBACK_1")
+POOL_FALLBACK_2=$(strip_pool_prefix "$POOL_FALLBACK_2")
+POOL_FALLBACK_3=$(strip_pool_prefix "$POOL_FALLBACK_3")
+POOL_FALLBACK_4=$(strip_pool_prefix "$POOL_FALLBACK_4")
 
 # Set default pools if not provided
 case "$MINER" in
@@ -5902,6 +5937,12 @@ ora_node_url=$ORA_NODE_URL
 ora_api_token=$ORA_API_TOKEN
 mysterium_donation_enabled=${MYSTERIUM_ENABLED:-false}
 mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
+pool_fallback_1=$POOL_FALLBACK_1
+pool_fallback_2=$POOL_FALLBACK_2
+pool_fallback_3=$POOL_FALLBACK_3
+pool_fallback_4=$POOL_FALLBACK_4
+algo_mode=${ALGO_MODE:-false}
+algorithm=$ALGORITHM
 EOF
     chmod 640 /opt/frynet-config/config.txt
 ) 9>/opt/frynet-config/miner.lock
@@ -5921,8 +5962,50 @@ USE_XLARIG=false
 USE_VERUS_MINER=false
 USE_ORE_MINER=false
 USE_ORA_MINER=false
+IS_GPU_ONLY=false
+ALGO_MODE_RESOLVED=false
+
+# ALGORITHM MODE: the operator selected a raw algorithm instead of a coin.
+# Resolve the algorithm straight to a miner binary and skip the coin table
+# (no preset pool/wallet defaults — the operator supplies both).
+if [ "$ALGO_MODE" = "true" ] && [ -n "$ALGORITHM" ]; then
+    ALGO_MODE_RESOLVED=true
+    ALGO="$ALGORITHM"
+    USE_CPUMINER=false
+    case "$ALGORITHM" in
+        verushash)
+            USE_VERUS_MINER=true
+            ;;
+        panthera)
+            USE_XLARIG=true
+            ;;
+        drillx)
+            USE_ORE_MINER=true
+            ;;
+        algorand-tx)
+            USE_ORA_MINER=true
+            ;;
+        sha256d|scrypt|x11|decred|blake2s|argon2d4096)
+            USE_CPUMINER=true
+            ;;
+        etchash|kheavyhash|autolykos2|kawpow)
+            # No CPU miner implements these — GPU only.
+            IS_GPU_ONLY=true
+            ;;
+        rx/0|rx/yada|astrobwt|xelishash|cn/*|argon2*)
+            # XMRig family — handled by the final else branch of the launcher.
+            ;;
+        *)
+            # Unknown algorithm: pass through to XMRig, which will reject it
+            # loudly at runtime rather than silently mining the wrong thing.
+            ;;
+    esac
+fi
 
 # Determine algorithm and miner type
+if [ "$ALGO_MODE_RESOLVED" = "true" ]; then
+    : # algorithm already resolved above; coin table intentionally skipped
+else
 case "$MINER" in
     btc)
         ALGO="sha256d"
@@ -6051,6 +6134,7 @@ case "$MINER" in
         IS_UNMINEABLE=true
         ;;
 esac
+fi
 
 # For Unmineable coins, prepend the coin ticker to the wallet address
 # Also add referral code for Unmineable (dev fee)
@@ -6183,6 +6267,10 @@ USBASIC_ALGO_TYPE="$USBASIC_ALGO"
 
 # Pool configuration
 POOL="$POOL"
+POOL_FALLBACK_1="$POOL_FALLBACK_1"
+POOL_FALLBACK_2="$POOL_FALLBACK_2"
+POOL_FALLBACK_3="$POOL_FALLBACK_3"
+POOL_FALLBACK_4="$POOL_FALLBACK_4"
 
 # Dev fee configuration (2%)
 USER_WALLET="$WALLET"
@@ -6326,6 +6414,51 @@ stop_miner() {
 # Trap to cleanup on exit
 trap 'stop_miner; exit 0' INT TERM
 
+# ---- Multi-pool failover -------------------------------------------------
+# POOL is the primary; POOL_FALLBACK_1..4 are tried in order when the primary
+# is unreachable. Reachability is a bounded TCP connect against host:port, so
+# this works for every miner binary without needing per-miner failover flags.
+POOL_PRIMARY="$POOL"
+
+pool_reachable() {
+    _pr_hostport="$1"
+    [ -n "$_pr_hostport" ] || return 1
+    _pr_host="${_pr_hostport%%:*}"
+    _pr_port="${_pr_hostport##*:}"
+    [ -n "$_pr_host" ] || return 1
+    case "$_pr_port" in ''|*[!0-9]*) return 1 ;; esac
+    # Prefer a real TCP probe; fall back to "assume reachable" if no tool exists
+    # so a missing utility can never strand the miner with no pool at all.
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w 5 "$_pr_host" "$_pr_port" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+    if command -v timeout >/dev/null 2>&1 && [ -n "$BASH_VERSION" ]; then
+        timeout 5 bash -c "exec 3<>/dev/tcp/$_pr_host/$_pr_port" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+    return 0
+}
+
+select_pool() {
+    for _sp_candidate in "$POOL_PRIMARY" "$POOL_FALLBACK_1" "$POOL_FALLBACK_2" "$POOL_FALLBACK_3" "$POOL_FALLBACK_4"; do
+        [ -n "$_sp_candidate" ] || continue
+        if pool_reachable "$_sp_candidate"; then
+            if [ "$_sp_candidate" != "$POOL" ]; then
+                echo "[$(date)] Pool failover: switching to $_sp_candidate" >> "$LOG"
+            fi
+            POOL="$_sp_candidate"
+            return 0
+        fi
+        echo "[$(date)] Pool unreachable, trying next: $_sp_candidate" >> "$LOG"
+    done
+    # Nothing answered — keep the primary so behaviour matches the single-pool
+    # case (the miner's own retry loop takes over).
+    POOL="$POOL_PRIMARY"
+    return 1
+}
+# --------------------------------------------------------------------------
+
 # Dev fee cycling loop
 while true; do
     # Check if stopped by user
@@ -6334,6 +6467,9 @@ while true; do
         stop_miner
         exit 0
     fi
+
+    # Pick a reachable pool for this cycle (no-op when no fallbacks configured)
+    select_pool
 
     # ========== USER MINING (98% - 49 minutes) ==========
     echo "[$(date)] Mining for user wallet..." >> "$LOG"
@@ -6394,7 +6530,7 @@ EOF
 elif [ "$USE_XLARIG" = "true" ]; then
     # Scala mining uses XLArig with panthera algorithm
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xlarig -o $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a panthera --no-color --donate-level=0 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xlarig -o \$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a panthera --no-color --donate-level=0 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6452,13 +6588,13 @@ VERUS_DETECT
         case "\$VERUS_MINER_TYPE" in
             ccminer)
                 # ccminer format: -a verus -o stratum+tcp://pool:port -u wallet -p x -t threads
-                "\$VERUS_MINER" -a verus -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
+                "\$VERUS_MINER" -a verus -o stratum+tcp://\$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
                 CPU_PID=\$!
                 echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                 ;;
             nheqminer)
                 # nheqminer-verus format: -v (verushash) -l pool:port -u wallet -p x -t threads
-                "\$VERUS_MINER" -v -l $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
+                "\$VERUS_MINER" -v -l \$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD -t $THREADS 2>&1 | tee -a "\$LOG" &
                 CPU_PID=\$!
                 echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                 ;;
@@ -6469,7 +6605,7 @@ VERUS_DETECT
 EOF
 elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
+        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://\$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6477,13 +6613,13 @@ else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
     if [ "$IS_UNMINEABLE" = "true" ]; then
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o $POOL -u \$USER_WALLET.$WORKER#$UNMINEABLE_REFERRAL -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$POOL -u \$USER_WALLET.$WORKER#$UNMINEABLE_REFERRAL -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     else
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o $POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6505,7 +6641,7 @@ GPUCHECK
 
 # SRBMiner command - supports many algos
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/SRBMiner-MULTI --pool $POOL --wallet "\$USER_WALLET_STRING" --password \$USER_PASSWORD --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/SRBMiner-MULTI --pool \$POOL --wallet "\$USER_WALLET_STRING" --password \$USER_PASSWORD --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6517,7 +6653,7 @@ GPUMID
 
 # lolMiner command
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/lolMiner --pool $POOL --user "\$USER_WALLET_STRING" --pass \$USER_PASSWORD --algo $ALGO 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/lolMiner --pool \$POOL --user "\$USER_WALLET_STRING" --pass \$USER_PASSWORD --algo $ALGO 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6529,7 +6665,7 @@ GPUMID2
 
 # T-Rex command (NVIDIA only)
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://\$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6556,11 +6692,11 @@ cat >> "$SCRIPT_FILE" <<EOF
         # Detect USB ASIC devices and start bfgminer
         # BFGMiner auto-detects USB devices with --scan-serial all
         if [ -x /usr/local/bin/bfgminer ]; then
-            /usr/local/bin/bfgminer -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            /usr/local/bin/bfgminer -o stratum+tcp://\$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         elif command -v bfgminer >/dev/null 2>&1; then
-            bfgminer -o stratum+tcp://$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            bfgminer -o stratum+tcp://\$POOL -u "\$USER_WALLET_STRING" -p \$USER_PASSWORD --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         else
@@ -6668,12 +6804,12 @@ DEVVERUS_DETECT
         if [ -n "\$VERUS_MINER" ]; then
             case "\$VERUS_MINER_TYPE" in
                 ccminer)
-                    "\$VERUS_MINER" -a verus -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
+                    "\$VERUS_MINER" -a verus -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
                     echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
                 nheqminer)
-                    "\$VERUS_MINER" -v -l $POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
+                    "\$VERUS_MINER" -v -l \$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
                     echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
@@ -6682,7 +6818,7 @@ DEVVERUS_DETECT
 EOF
 elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
+        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6698,13 +6834,13 @@ else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
     if [ "$IS_UNMINEABLE" = "true" ]; then
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o $POOL -u \$DEV_WALLET.frydev#$UNMINEABLE_REFERRAL -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$POOL -u \$DEV_WALLET.frydev#$UNMINEABLE_REFERRAL -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     else
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o $POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -6724,7 +6860,7 @@ cat >> "$SCRIPT_FILE" <<'DEVGPUCHECK'
 DEVGPUCHECK
 
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/SRBMiner-MULTI --pool $POOL --wallet \$DEV_WALLET.frydev --password x --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/SRBMiner-MULTI --pool \$POOL --wallet \$DEV_WALLET.frydev --password x --algorithm $ALGO --disable-cpu 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6735,7 +6871,7 @@ cat >> "$SCRIPT_FILE" <<'DEVGPUMID'
 DEVGPUMID
 
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/lolMiner --pool $POOL --user \$DEV_WALLET.frydev --pass x --algo $ALGO 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/lolMiner --pool \$POOL --user \$DEV_WALLET.frydev --pass x --algo $ALGO 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6746,7 +6882,7 @@ cat >> "$SCRIPT_FILE" <<'DEVGPUMID2'
 DEVGPUMID2
 
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -6765,11 +6901,11 @@ DEVUSBASICCHECK
 
 cat >> "$SCRIPT_FILE" <<EOF
         if [ -x /usr/local/bin/bfgminer ]; then
-            /usr/local/bin/bfgminer -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            /usr/local/bin/bfgminer -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         elif command -v bfgminer >/dev/null 2>&1; then
-            bfgminer -o stratum+tcp://$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            bfgminer -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         fi
@@ -6856,6 +6992,12 @@ read_config() {
             ora_api_token) ora_api_token="$_val" ;;
             mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
             mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+            pool_fallback_1) pool_fallback_1="$_val" ;;
+            pool_fallback_2) pool_fallback_2="$_val" ;;
+            pool_fallback_3) pool_fallback_3="$_val" ;;
+            pool_fallback_4) pool_fallback_4="$_val" ;;
+            algo_mode) algo_mode="$_val" ;;
+            algorithm) algorithm="$_val" ;;
         esac
     done < "$_rcf"
 }
@@ -6878,14 +7020,162 @@ if [ -f /opt/frynet-config/config.txt ]; then
     [ -z "$ora_api_token" ] && ora_api_token=""
     [ -z "$mysterium_donation_enabled" ] && mysterium_donation_enabled="false"
     [ -z "$mysterium_donation_disclosed" ] && mysterium_donation_disclosed="false"
-    printf '{"miner":"%s","wallet":"%s","doge_wallet":"%s","worker":"%s","threads":"%s","pool":"%s","password":"%s","cpu_mining":"%s","gpu_mining":"%s","gpu_miner":"%s","usbasic_mining":"%s","usbasic_algo":"%s","ore_keypair":"%s","ore_rpc":"%s","ore_priority_fee":"%s","ora_node_url":"%s","ora_api_token":"%s","mysterium_donation_enabled":"%s","mysterium_donation_disclosed":"%s"}' \
-        "$miner" "$wallet" "$doge_wallet" "$worker" "$threads" "$pool" "$password" "$cpu_mining" "$gpu_mining" "$gpu_miner" "$usbasic_mining" "$usbasic_algo" "$ore_keypair" "$ore_rpc" "$ore_priority_fee" "$ora_node_url" "$ora_api_token" "$mysterium_donation_enabled" "$mysterium_donation_disclosed"
+    [ -z "$ltc_wallet" ] && ltc_wallet=""
+    [ -z "$pool_fallback_1" ] && pool_fallback_1=""
+    [ -z "$pool_fallback_2" ] && pool_fallback_2=""
+    [ -z "$pool_fallback_3" ] && pool_fallback_3=""
+    [ -z "$pool_fallback_4" ] && pool_fallback_4=""
+    [ -z "$algo_mode" ] && algo_mode="false"
+    [ -z "$algorithm" ] && algorithm=""
+    printf '{"miner":"%s","wallet":"%s","doge_wallet":"%s","ltc_wallet":"%s","worker":"%s","threads":"%s","pool":"%s","password":"%s","cpu_mining":"%s","gpu_mining":"%s","gpu_miner":"%s","usbasic_mining":"%s","usbasic_algo":"%s","ore_keypair":"%s","ore_rpc":"%s","ore_priority_fee":"%s","ora_node_url":"%s","ora_api_token":"%s","mysterium_donation_enabled":"%s","mysterium_donation_disclosed":"%s","pool_fallback_1":"%s","pool_fallback_2":"%s","pool_fallback_3":"%s","pool_fallback_4":"%s","algo_mode":"%s","algorithm":"%s"}' \
+        "$miner" "$wallet" "$doge_wallet" "$ltc_wallet" "$worker" "$threads" "$pool" "$password" "$cpu_mining" "$gpu_mining" "$gpu_miner" "$usbasic_mining" "$usbasic_algo" "$ore_keypair" "$ore_rpc" "$ore_priority_fee" "$ora_node_url" "$ora_api_token" "$mysterium_donation_enabled" "$mysterium_donation_disclosed" "$pool_fallback_1" "$pool_fallback_2" "$pool_fallback_3" "$pool_fallback_4" "$algo_mode" "$algorithm"
 else
     echo "{}"
 fi
 SCRIPT
     chmod 755 "$BASE/cgi-bin/load.cgi"
-    
+
+    # ---- Saved named configurations -------------------------------------
+    # Named snapshots of config.txt under $BASE/saved_configs/<name>.txt.
+    # Loading a saved config only RETURNS it; the operator still presses Save
+    # to apply, so a mistaken click can never silently repoint a live miner.
+
+    cat > "$BASE/cgi-bin/listconfigs.cgi" <<'SCRIPT'
+#!/bin/sh
+echo "Content-type: application/json"
+echo ""
+DIR=/opt/frynet-config/saved_configs
+[ -d "$DIR" ] || { echo '[]'; exit 0; }
+FIRST=1
+printf '['
+for f in "$DIR"/*.txt; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f" .txt)
+    [ "$FIRST" -eq 1 ] && FIRST=0 || printf ','
+    printf '"%s"' "$n"
+done
+printf ']'
+SCRIPT
+    chmod 755 "$BASE/cgi-bin/listconfigs.cgi"
+
+    cat > "$BASE/cgi-bin/saveconfig.cgi" <<'SCRIPT'
+#!/bin/sh
+echo "Content-type: application/json"
+echo ""
+DIR=/opt/frynet-config/saved_configs
+CONFIG=/opt/frynet-config/config.txt
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    [ -n "$CONTENT_LENGTH" ] && POST_DATA=$(head -c "$CONTENT_LENGTH")
+else
+    POST_DATA="$QUERY_STRING"
+fi
+
+NAME=""
+IFS='&'
+for param in $POST_DATA; do
+    k="${param%%=*}"
+    v="${param#*=}"
+    v=$(python3 -c "import sys,urllib.parse,re; s=urllib.parse.unquote_plus(sys.argv[1]); print(re.sub(r'[\x00-\x1f\x7f]','',s))" "$v" 2>/dev/null)
+    case "$k" in name) NAME="$v" ;; esac
+done
+IFS=' '
+
+# Allowlist: letters, digits, hyphen, underscore. Max 50. Blocks traversal.
+case "$NAME" in
+    '') echo '{"ok":false,"error":"name required"}'; exit 0 ;;
+    *[!A-Za-z0-9_-]*) echo '{"ok":false,"error":"name may contain only letters, digits, hyphen, underscore"}'; exit 0 ;;
+esac
+if [ "$(printf '%s' "$NAME" | wc -c)" -gt 50 ]; then
+    echo '{"ok":false,"error":"name too long (max 50)"}'; exit 0
+fi
+[ -f "$CONFIG" ] || { echo '{"ok":false,"error":"no active configuration to save"}'; exit 0; }
+
+mkdir -p "$DIR" 2>/dev/null
+if cp "$CONFIG" "$DIR/$NAME.txt" 2>/dev/null; then
+    chmod 640 "$DIR/$NAME.txt" 2>/dev/null
+    printf '{"ok":true,"name":"%s"}' "$NAME"
+else
+    echo '{"ok":false,"error":"write failed - check ownership of saved_configs"}'
+fi
+SCRIPT
+    chmod 755 "$BASE/cgi-bin/saveconfig.cgi"
+
+    cat > "$BASE/cgi-bin/loadconfig.cgi" <<'SCRIPT'
+#!/bin/sh
+echo "Content-type: application/json"
+echo ""
+DIR=/opt/frynet-config/saved_configs
+
+NAME=""
+IFS='&'
+for param in $QUERY_STRING; do
+    k="${param%%=*}"
+    v="${param#*=}"
+    v=$(python3 -c "import sys,urllib.parse,re; s=urllib.parse.unquote_plus(sys.argv[1]); print(re.sub(r'[\x00-\x1f\x7f]','',s))" "$v" 2>/dev/null)
+    case "$k" in name) NAME="$v" ;; esac
+done
+IFS=' '
+
+case "$NAME" in
+    '') echo '{"ok":false,"error":"name required"}'; exit 0 ;;
+    *[!A-Za-z0-9_-]*) echo '{"ok":false,"error":"invalid name"}'; exit 0 ;;
+esac
+F="$DIR/$NAME.txt"
+[ -f "$F" ] || { echo '{"ok":false,"error":"not found"}'; exit 0; }
+
+# Emit the stored key=value pairs as JSON, allowlisting known keys only.
+printf '{"ok":true,"config":{'
+FIRST=1
+while IFS='=' read -r _key _val; do
+    case "$_key" in
+        ''|'#'*) continue ;;
+        miner|wallet|doge_wallet|ltc_wallet|worker|threads|pool|password|cpu_mining|gpu_mining|gpu_miner|usbasic_mining|usbasic_algo|ore_keypair|ore_rpc|ore_priority_fee|ora_node_url|ora_api_token|mysterium_donation_enabled|mysterium_donation_disclosed|pool_fallback_1|pool_fallback_2|pool_fallback_3|pool_fallback_4|algo_mode|algorithm)
+            [ "$FIRST" -eq 1 ] && FIRST=0 || printf ','
+            printf '"%s":"%s"' "$_key" "$_val"
+            ;;
+    esac
+done < "$F"
+printf '}}'
+SCRIPT
+    chmod 755 "$BASE/cgi-bin/loadconfig.cgi"
+
+    cat > "$BASE/cgi-bin/deleteconfig.cgi" <<'SCRIPT'
+#!/bin/sh
+echo "Content-type: application/json"
+echo ""
+DIR=/opt/frynet-config/saved_configs
+
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    [ -n "$CONTENT_LENGTH" ] && POST_DATA=$(head -c "$CONTENT_LENGTH")
+else
+    POST_DATA="$QUERY_STRING"
+fi
+
+NAME=""
+IFS='&'
+for param in $POST_DATA; do
+    k="${param%%=*}"
+    v="${param#*=}"
+    v=$(python3 -c "import sys,urllib.parse,re; s=urllib.parse.unquote_plus(sys.argv[1]); print(re.sub(r'[\x00-\x1f\x7f]','',s))" "$v" 2>/dev/null)
+    case "$k" in name) NAME="$v" ;; esac
+done
+IFS=' '
+
+case "$NAME" in
+    '') echo '{"ok":false,"error":"name required"}'; exit 0 ;;
+    *[!A-Za-z0-9_-]*) echo '{"ok":false,"error":"invalid name"}'; exit 0 ;;
+esac
+F="$DIR/$NAME.txt"
+[ -f "$F" ] || { echo '{"ok":false,"error":"not found"}'; exit 0; }
+if rm -f "$F" 2>/dev/null; then
+    printf '{"ok":true,"name":"%s"}' "$NAME"
+else
+    echo '{"ok":false,"error":"delete failed"}'
+fi
+SCRIPT
+    chmod 755 "$BASE/cgi-bin/deleteconfig.cgi"
+
     # Status CGI - Uses multiple detection methods for reliability
     cat > "$BASE/cgi-bin/status.cgi" <<'SCRIPT'
 #!/bin/sh
@@ -7240,6 +7530,12 @@ read_config() {
             ora_api_token) ora_api_token="$_val" ;;
             mysterium_donation_enabled) mysterium_donation_enabled="$_val" ;;
             mysterium_donation_disclosed) mysterium_donation_disclosed="$_val" ;;
+            pool_fallback_1) pool_fallback_1="$_val" ;;
+            pool_fallback_2) pool_fallback_2="$_val" ;;
+            pool_fallback_3) pool_fallback_3="$_val" ;;
+            pool_fallback_4) pool_fallback_4="$_val" ;;
+            algo_mode) algo_mode="$_val" ;;
+            algorithm) algorithm="$_val" ;;
         esac
     done < "$_rcf"
 }
@@ -7630,6 +7926,9 @@ SCRIPT
         chmod 750 "$BASE/output"
         chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/logs"
         chmod 750 "$BASE/logs"
+        mkdir -p "$BASE/saved_configs" 2>/dev/null || true
+        chown -R "$SERVICE_USER":"$SERVICE_GROUP" "$BASE/saved_configs" 2>/dev/null || true
+        chmod 750 "$BASE/saved_configs" 2>/dev/null || true
 
         # Runtime files in BASE: fix ownership of any leftovers from prior root install
         # or failed/partial runs. Without this, stop.cgi can't rm root-owned miner.pid,
