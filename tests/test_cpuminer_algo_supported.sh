@@ -63,9 +63,32 @@ fi
 
 FAIL=0
 
+# ---- 0. Seed a good existing config so we can prove the rejection is
+#         NON-DESTRUCTIVE. The first version of this guard ran AFTER save.cgi
+#         had already stopped the running miner and overwritten config.txt, so
+#         rejecting a coin wrecked a working setup. Caught on M2: a rejected
+#         arionum save left miner=arionum in config.txt and killed ccminer.
+GOOD='miner=btc&wallet=1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa&worker=w1&threads=1&pool=good.example.com%3A3333&password=x&cpu_mining=true&gpu_mining=false&usbasic_mining=false'
+printf '%s' "$GOOD" | REQUEST_METHOD=POST CONTENT_LENGTH=${#GOOD} sh "$SB/save.cgi" >/dev/null 2>&1
+if [ ! -f "$SB/config.txt" ]; then
+    echo "FAIL: could not seed a baseline config.txt in the sandbox"; exit 1
+fi
+BEFORE_SHA=$(sha256sum "$SB/config.txt" | awk '{print $1}')
+
 # ---- 1. UNSUPPORTED algo (arionum -> argon2d4096) must be REFUSED ----
+rm -rf "$SB/output"; mkdir -p "$SB/output"
 DATA='miner=arionum&wallet=4ZqEbEqbCmshRoFxNPRDPqXHPSQTLBCCA6vaHkP5oXtT&worker=w1&threads=1&pool=aropool.com%3A80&password=x&cpu_mining=true&gpu_mining=false&usbasic_mining=false'
 OUT=$(printf '%s' "$DATA" | REQUEST_METHOD=POST CONTENT_LENGTH=${#DATA} sh "$SB/save.cgi" 2>/dev/null)
+
+# the rejection must not have touched the existing config
+AFTER_SHA=$(sha256sum "$SB/config.txt" | awk '{print $1}')
+if [ "$BEFORE_SHA" != "$AFTER_SHA" ]; then
+    echo "ASSERT FAIL: a REJECTED save overwrote config.txt (destructive rejection)"
+    echo "  before=$BEFORE_SHA"
+    echo "  after =$AFTER_SHA"
+    grep -E '^miner=|^pool=' "$SB/config.txt" | sed 's/^/    /'
+    FAIL=1
+fi
 
 if [ -f "$SB/output/arionum/start.sh" ]; then
     echo "ASSERT FAIL: start.sh was generated for an algorithm cpuminer cannot mine"

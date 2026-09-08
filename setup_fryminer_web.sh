@@ -6248,117 +6248,10 @@ chmod 750 /opt/frynet-config/output
 # Default password to "x" if empty
 [ -z "$PASSWORD" ] && PASSWORD="x"
 
-# Stop existing miner if coin changed and mining is active
-OLD_MINER=""
-if [ -f /opt/frynet-config/config.txt ]; then
-    OLD_MINER=$(grep "^miner=" /opt/frynet-config/config.txt | cut -d= -f2)
-fi
-if [ -n "$OLD_MINER" ] && [ "$OLD_MINER" != "$MINER" ]; then
-    _pidfile="/opt/frynet-config/miner.pid"
-    _running=false
-    if [ -f "$_pidfile" ]; then
-        _tpid=$(cat "$_pidfile" 2>/dev/null)
-        if [ -n "$_tpid" ] && kill -0 "$_tpid" 2>/dev/null; then
-            _running=true
-        fi
-    fi
-    if [ "$_running" = "false" ]; then
-        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
-            if ps | grep -v grep | grep -q "$_pat" 2>/dev/null; then
-                _running=true
-                break
-            fi
-        done
-    fi
-    if [ "$_running" = "true" ]; then
-        touch /opt/frynet-config/stopped
-        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
-            if [ -f "$_pf" ]; then
-                _tpid=$(cat "$_pf" 2>/dev/null)
-                if [ -n "$_tpid" ]; then
-                    kill -TERM "$_tpid" 2>/dev/null || true
-                fi
-            fi
-        done
-        sleep 1
-        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
-            if [ -f "$_pf" ]; then
-                _tpid=$(cat "$_pf" 2>/dev/null)
-                if [ -n "$_tpid" ]; then
-                    kill -KILL "$_tpid" 2>/dev/null || true
-                fi
-            fi
-        done
-        rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
-        if [ -f "$_pidfile" ]; then
-            _tpid=$(cat "$_pidfile" 2>/dev/null)
-            if [ -n "$_tpid" ]; then
-                kill -KILL "$_tpid" 2>/dev/null || true
-            fi
-            rm -f "$_pidfile"
-        fi
-        sleep 2
-        # Kill any remaining miner processes not tracked by PID files
-        _procs=""
-        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
-            _pids=$(ps | grep -v grep | grep "$_pat" 2>/dev/null | awk '{print $1}')
-            if [ -n "$_pids" ]; then
-                _procs="$_procs $_pids"
-            fi
-        done
-        if [ -n "$_procs" ]; then
-            for _pid in $_procs; do
-                kill -TERM "$_pid" 2>/dev/null || true
-            done
-            sleep 1
-            for _pid in $_procs; do
-                kill -KILL "$_pid" 2>/dev/null || true
-            done
-        fi
-    fi
-fi
-
-(
-    flock -x 9
-    cat > /opt/frynet-config/config.txt <<EOF
-miner=$MINER
-wallet=$WALLET
-doge_wallet=$DOGE_WALLET
-ltc_wallet=$LTC_WALLET
-worker=$WORKER
-threads=$THREADS
-pool=$POOL
-password=$PASSWORD
-cpu_mining=$CPU_MINING
-gpu_mining=$GPU_MINING
-gpu_miner=$GPU_MINER
-usbasic_mining=$USBASIC_MINING
-usbasic_algo=$USBASIC_ALGO
-ore_keypair=$ORE_KEYPAIR
-ore_rpc=$ORE_RPC
-ore_priority_fee=$ORE_PRIORITY_FEE
-ora_node_url=$ORA_NODE_URL
-ora_api_token=$ORA_API_TOKEN
-mysterium_donation_enabled=${MYSTERIUM_ENABLED:-false}
-mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
-pool_fallback_1=$POOL_FALLBACK_1
-pool_fallback_2=$POOL_FALLBACK_2
-pool_fallback_3=$POOL_FALLBACK_3
-pool_fallback_4=$POOL_FALLBACK_4
-algo_mode=${ALGO_MODE:-false}
-algorithm=$ALGORITHM
-EOF
-    chmod 640 /opt/frynet-config/config.txt
-) 9>/opt/frynet-config/miner.lock
-SAVE_STATUS=$?
-if [ "$SAVE_STATUS" -ne 0 ] || ! grep -q "^miner=" /opt/frynet-config/config.txt 2>/dev/null; then
-    echo "<div class='error'>❌ Failed to save configuration (exit $SAVE_STATUS). Could not write /opt/frynet-config/config.txt — check ownership/permissions of /opt/frynet-config/miner.lock and config.txt (they may be root-owned from an earlier install).</div>"
-    exit 0
-fi
-
-SCRIPT_DIR="/opt/frynet-config/output/$MINER"
-mkdir -p "$SCRIPT_DIR"
-SCRIPT_FILE="$SCRIPT_DIR/start.sh"
+# --- algorithm resolution (pure computation) ---------------------------
+# Resolved BEFORE the miner-stop and config.txt write below so that an
+# unmineable selection is rejected without stopping a running miner or
+# overwriting a good config. Sets ALGO / USE_* / IS_* from $MINER only.
 
 # Initialize flags
 IS_UNMINEABLE=false
@@ -6555,6 +6448,119 @@ if [ "$USE_CPUMINER" = "true" ] && [ -x /usr/local/bin/cpuminer ]; then
         exit 0
     fi
 fi
+
+# Stop existing miner if coin changed and mining is active
+OLD_MINER=""
+if [ -f /opt/frynet-config/config.txt ]; then
+    OLD_MINER=$(grep "^miner=" /opt/frynet-config/config.txt | cut -d= -f2)
+fi
+if [ -n "$OLD_MINER" ] && [ "$OLD_MINER" != "$MINER" ]; then
+    _pidfile="/opt/frynet-config/miner.pid"
+    _running=false
+    if [ -f "$_pidfile" ]; then
+        _tpid=$(cat "$_pidfile" 2>/dev/null)
+        if [ -n "$_tpid" ] && kill -0 "$_tpid" 2>/dev/null; then
+            _running=true
+        fi
+    fi
+    if [ "$_running" = "false" ]; then
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            if ps | grep -v grep | grep -q "$_pat" 2>/dev/null; then
+                _running=true
+                break
+            fi
+        done
+    fi
+    if [ "$_running" = "true" ]; then
+        touch /opt/frynet-config/stopped
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -TERM "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        sleep 1
+        for _pf in /opt/frynet-config/pids/cpu.pid /opt/frynet-config/pids/gpu.pid /opt/frynet-config/pids/asic.pid; do
+            if [ -f "$_pf" ]; then
+                _tpid=$(cat "$_pf" 2>/dev/null)
+                if [ -n "$_tpid" ]; then
+                    kill -KILL "$_tpid" 2>/dev/null || true
+                fi
+            fi
+        done
+        rm -f /opt/frynet-config/pids/*.pid 2>/dev/null
+        if [ -f "$_pidfile" ]; then
+            _tpid=$(cat "$_pidfile" 2>/dev/null)
+            if [ -n "$_tpid" ]; then
+                kill -KILL "$_tpid" 2>/dev/null || true
+            fi
+            rm -f "$_pidfile"
+        fi
+        sleep 2
+        # Kill any remaining miner processes not tracked by PID files
+        _procs=""
+        for _pat in xmrig xlarig cpuminer ccminer lolMiner "t-rex" SRBMiner bfgminer cgminer ore-cli ora_miner; do
+            _pids=$(ps | grep -v grep | grep "$_pat" 2>/dev/null | awk '{print $1}')
+            if [ -n "$_pids" ]; then
+                _procs="$_procs $_pids"
+            fi
+        done
+        if [ -n "$_procs" ]; then
+            for _pid in $_procs; do
+                kill -TERM "$_pid" 2>/dev/null || true
+            done
+            sleep 1
+            for _pid in $_procs; do
+                kill -KILL "$_pid" 2>/dev/null || true
+            done
+        fi
+    fi
+fi
+
+(
+    flock -x 9
+    cat > /opt/frynet-config/config.txt <<EOF
+miner=$MINER
+wallet=$WALLET
+doge_wallet=$DOGE_WALLET
+ltc_wallet=$LTC_WALLET
+worker=$WORKER
+threads=$THREADS
+pool=$POOL
+password=$PASSWORD
+cpu_mining=$CPU_MINING
+gpu_mining=$GPU_MINING
+gpu_miner=$GPU_MINER
+usbasic_mining=$USBASIC_MINING
+usbasic_algo=$USBASIC_ALGO
+ore_keypair=$ORE_KEYPAIR
+ore_rpc=$ORE_RPC
+ore_priority_fee=$ORE_PRIORITY_FEE
+ora_node_url=$ORA_NODE_URL
+ora_api_token=$ORA_API_TOKEN
+mysterium_donation_enabled=${MYSTERIUM_ENABLED:-false}
+mysterium_donation_disclosed=${MYSTERIUM_DISCLOSED:-false}
+pool_fallback_1=$POOL_FALLBACK_1
+pool_fallback_2=$POOL_FALLBACK_2
+pool_fallback_3=$POOL_FALLBACK_3
+pool_fallback_4=$POOL_FALLBACK_4
+algo_mode=${ALGO_MODE:-false}
+algorithm=$ALGORITHM
+EOF
+    chmod 640 /opt/frynet-config/config.txt
+) 9>/opt/frynet-config/miner.lock
+SAVE_STATUS=$?
+if [ "$SAVE_STATUS" -ne 0 ] || ! grep -q "^miner=" /opt/frynet-config/config.txt 2>/dev/null; then
+    echo "<div class='error'>❌ Failed to save configuration (exit $SAVE_STATUS). Could not write /opt/frynet-config/config.txt — check ownership/permissions of /opt/frynet-config/miner.lock and config.txt (they may be root-owned from an earlier install).</div>"
+    exit 0
+fi
+
+SCRIPT_DIR="/opt/frynet-config/output/$MINER"
+mkdir -p "$SCRIPT_DIR"
+SCRIPT_FILE="$SCRIPT_DIR/start.sh"
+
 
 # For Unmineable coins, prepend the coin ticker to the wallet address
 # Also add referral code for Unmineable (dev fee)
