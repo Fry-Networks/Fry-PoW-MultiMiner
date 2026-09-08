@@ -4263,7 +4263,59 @@ optgroup { background: #1a1a1a; color: #dc143c; }
             <h2 style="color: #dc143c;">Mining Configuration</h2>
             
             <form id="configForm">
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+                        <input type="checkbox" id="algo_mode" name="algo_mode" value="true" style="width:auto; margin:0;">
+                        <span>Algorithm Mode</span>
+                        <span id="algoModeBadge" style="display:none; font-size:11px; font-weight:bold; color:#ffa500; border:1px solid #ffa500; border-radius:4px; padding:1px 6px;">ADVANCED</span>
+                    </label>
+                    <div id="algoModeHelp" style="display:none; font-size:12px; color:#888; margin-top:4px;">
+                        Pick a raw hashing algorithm instead of a coin. No pool or wallet defaults are
+                        filled in — you must supply both yourself. Use this when your pool tells you an
+                        algorithm rather than a coin.
+                    </div>
+                </div>
+
+                <div class="form-group" id="algorithmGroup" style="display:none;">
+                    <label>Select Algorithm:</label>
+                    <select id="algorithm" name="algorithm">
+                        <option value="">-- Select Algorithm --</option>
+                        <optgroup label="CPU (cpuminer)">
+                            <option value="sha256d">SHA-256d</option>
+                            <option value="scrypt">Scrypt</option>
+                            <option value="x11">X11</option>
+                            <option value="decred">Decred (Blake)</option>
+                            <option value="blake2s">Blake2s</option>
+                            <option value="argon2d4096">Argon2d-4096</option>
+                        </optgroup>
+                        <optgroup label="CPU (RandomX family - XMRig)">
+                            <option value="rx/0">RandomX (rx/0)</option>
+                            <option value="rx/yada">RandomX Yada (rx/yada)</option>
+                            <option value="astrobwt">AstroBWT</option>
+                            <option value="xelishash">XelisHash</option>
+                        </optgroup>
+                        <optgroup label="CPU (dedicated miner)">
+                            <option value="verushash">VerusHash (ccminer-verus)</option>
+                            <option value="panthera">Panthera (XLArig)</option>
+                        </optgroup>
+                        <optgroup label="GPU only">
+                            <option value="etchash">Etchash</option>
+                            <option value="kheavyhash">kHeavyHash</option>
+                            <option value="autolykos2">Autolykos2</option>
+                            <option value="kawpow">KAWPOW</option>
+                        </optgroup>
+                        <optgroup label="Blockchain PoW">
+                            <option value="drillx">DrillX (ORE / Solana)</option>
+                            <option value="algorand-tx">Algorand Tx Mining (ORA)</option>
+                        </optgroup>
+                    </select>
+                    <div id="algoGpuWarn" class="warning-box" style="display:none; margin-top:8px;">
+                        This algorithm has no CPU implementation. Enable GPU Mining and pick a GPU miner
+                        below, or CPU mining will start and immediately fail.
+                    </div>
+                </div>
+
+                <div class="form-group" id="coinGroup">
                     <label>Select Cryptocurrency:</label>
                     <select id="miner" name="miner" required>
                         <option value="">-- Select Coin --</option>
@@ -4391,6 +4443,7 @@ optgroup { background: #1a1a1a; color: #dc143c; }
                 <div class="form-group">
                     <label>Worker Name:</label>
                     <input type="text" id="worker" name="worker" value="worker1">
+                    <small id="workerHint" style="display:none; color:#ffa500;"></small>
                 </div>
                 
                 <div class="form-group">
@@ -4444,7 +4497,17 @@ optgroup { background: #1a1a1a; color: #dc143c; }
                     <input type="text" id="pool" name="pool" placeholder="pool.example.com:3333">
                     <small style="color: #888;">Enter without stratum+tcp:// prefix (will be added automatically)</small>
                 </div>
-                
+
+                <div class="form-group" id="fallbackPoolGroup">
+                    <label>Fallback Pools: <span style="color: #888; font-weight: normal;">(Optional, tried in order)</span></label>
+                    <div id="fallbackPoolList"></div>
+                    <button type="button" id="addPoolBtn" style="margin-top:8px; padding:8px 14px; font-size:13px;">+ Add Fallback Pool</button>
+                    <small style="color: #888; display:block; margin-top:6px;">
+                        The miner probes the primary pool first, then each fallback in order, and mines
+                        against the first one that answers. Re-checked at the start of every mining cycle.
+                    </small>
+                </div>
+
                 <div class="form-group">
                     <label>Pool Password: <span style="color: #888; font-weight: normal;">(Optional)</span></label>
                     <input type="text" id="password" name="password" value="x" placeholder="x">
@@ -4465,7 +4528,24 @@ optgroup { background: #1a1a1a; color: #dc143c; }
             </form>
             
             <div id="message"></div>
-            
+
+            <div class="status-card" style="margin-top: 25px;">
+                <h3 style="color:#dc143c; margin-top:0;">💾 Saved Configurations</h3>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <select id="savedConfigSelect" style="flex:1; min-width:200px;">
+                        <option value="">-- No saved configurations --</option>
+                    </select>
+                    <button type="button" onclick="loadSavedConfig()" style="padding:10px 16px;">📂 Load</button>
+                    <button type="button" onclick="deleteSavedConfig()" style="padding:10px 16px;">🗑️ Delete</button>
+                    <button type="button" onclick="saveConfigAs()" style="padding:10px 16px;">➕ Save As…</button>
+                </div>
+                <div id="configMgmtMessage" style="margin-top:10px;"></div>
+                <small style="color:#888; display:block; margin-top:8px;">
+                    Load fills the form only — press <strong>Save Configuration</strong> to actually apply it.
+                    Save As snapshots the currently <em>saved</em> configuration, so save your edits first.
+                </small>
+            </div>
+
             <div style="text-align: center; margin-top: 20px;">
                 <button onclick="startMining()">▶️ Start Mining</button>
                 <button onclick="stopMining()">⏹️ Stop Mining</button>
@@ -5081,6 +5161,22 @@ document.getElementById('configForm').addEventListener('submit', function(e) {
         params.set('pool', document.getElementById('ora_node_url').value);
     }
 
+    // Algorithm mode: send the raw algorithm instead of relying on the coin table
+    const algoModeOn = document.getElementById('algo_mode').checked;
+    params.set('algo_mode', algoModeOn ? 'true' : 'false');
+    params.set('algorithm', algoModeOn ? document.getElementById('algorithm').value : '');
+    if (algoModeOn && !document.getElementById('algorithm').value) {
+        document.getElementById('message').innerHTML =
+            '<div class="error">❌ Algorithm Mode is on but no algorithm is selected.</div>';
+        return;
+    }
+
+    // Fallback pools (up to 4), in the order shown in the UI
+    const fallbacks = getFallbackPools();
+    for (let i = 0; i < 4; i++) {
+        params.set('pool_fallback_' + (i + 1), fallbacks[i] || '');
+    }
+
     fetch('/cgi-bin/save.cgi', {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -5158,8 +5254,20 @@ function loadConfig() {
                 // Load Mysterium donation setting
                 document.getElementById('mysterium_donation_enabled').checked = (data.mysterium_donation_enabled === 'true');
 
+                // Load algorithm mode
+                document.getElementById('algo_mode').checked = (data.algo_mode === 'true');
+                if (data.algorithm) document.getElementById('algorithm').value = data.algorithm;
+                updateAlgoModeUI();
+
+                // Load fallback pools
+                setFallbackPools([
+                    data.pool_fallback_1, data.pool_fallback_2,
+                    data.pool_fallback_3, data.pool_fallback_4
+                ].filter(function (p) { return p; }));
+
                 // Update UI visibility
                 updateMiningModeUI();
+                updateWorkerDetection();
 
                 document.getElementById('miner').dispatchEvent(new Event('change'));
                 document.getElementById('currentCoin').textContent = data.miner.toUpperCase();
@@ -5393,6 +5501,302 @@ function forceUpdate() {
 }
 
 // Initialize
+// ===================== Worker name auto-detection =====================
+// Many pools take the worker as a suffix on the address (address.worker).
+// When the operator types that form, the worker is already baked into the
+// wallet, so a separate worker value would be appended a second time. Detect
+// it, mirror it into the worker field, and lock the field so that can't happen.
+function updateWorkerDetection() {
+    const walletEl = document.getElementById('wallet');
+    const workerEl = document.getElementById('worker');
+    const hintEl = document.getElementById('workerHint');
+    if (!walletEl || !workerEl || !hintEl) return;
+
+    const wallet = walletEl.value.trim();
+    const dot = wallet.lastIndexOf('.');
+    const suffix = dot > 0 ? wallet.slice(dot + 1) : '';
+
+    if (suffix) {
+        if (!workerEl.dataset.manualValue) {
+            workerEl.dataset.manualValue = workerEl.value;
+        }
+        workerEl.value = suffix;
+        workerEl.disabled = true;
+        workerEl.style.opacity = '0.55';
+        hintEl.textContent = 'Worker "' + suffix + '" detected from the wallet address.';
+        hintEl.style.display = 'block';
+    } else {
+        if (workerEl.disabled) {
+            workerEl.value = workerEl.dataset.manualValue || 'worker1';
+            delete workerEl.dataset.manualValue;
+        }
+        workerEl.disabled = false;
+        workerEl.style.opacity = '1';
+        hintEl.style.display = 'none';
+    }
+}
+
+// ===================== Algorithm mode =====================
+const GPU_ONLY_ALGOS = ['etchash', 'kheavyhash', 'autolykos2', 'kawpow'];
+
+function updateAlgoModeUI() {
+    const on = document.getElementById('algo_mode').checked;
+    document.getElementById('algorithmGroup').style.display = on ? 'block' : 'none';
+    document.getElementById('coinGroup').style.display = on ? 'none' : 'block';
+    document.getElementById('algoModeBadge').style.display = on ? 'inline-block' : 'none';
+    document.getElementById('algoModeHelp').style.display = on ? 'block' : 'none';
+
+    // The coin select is `required`; that must not block submission in algo mode.
+    document.getElementById('miner').required = !on;
+
+    const algoEl = document.getElementById('algorithm');
+    const warn = document.getElementById('algoGpuWarn');
+    warn.style.display = (on && GPU_ONLY_ALGOS.indexOf(algoEl.value) !== -1) ? 'block' : 'none';
+
+    // Algorithm mode never injects pool/wallet defaults - the pool field is the
+    // operator's to fill, so make sure a previous Unmineable coin hasn't left it locked.
+    if (on) {
+        const poolEl = document.getElementById('pool');
+        poolEl.disabled = false;
+        poolEl.style.opacity = '1';
+    }
+}
+
+// ===================== Fallback pools =====================
+const MAX_FALLBACK_POOLS = 4;
+
+function getFallbackPools() {
+    return Array.prototype.slice
+        .call(document.querySelectorAll('#fallbackPoolList input.fallback-pool'))
+        .map(function (i) { return i.value.trim(); })
+        .filter(function (v) { return v; });
+}
+
+function setFallbackPools(list) {
+    const container = document.getElementById('fallbackPoolList');
+    container.innerHTML = '';
+    (list || []).slice(0, MAX_FALLBACK_POOLS).forEach(function (v) { addFallbackPool(v); });
+    renumberFallbackPools();
+}
+
+function addFallbackPool(value) {
+    const container = document.getElementById('fallbackPoolList');
+    if (container.children.length >= MAX_FALLBACK_POOLS) return;
+
+    const row = document.createElement('div');
+    row.className = 'fallback-pool-row';
+    row.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:6px;';
+
+    const label = document.createElement('span');
+    label.className = 'fallback-pool-label';
+    label.style.cssText = 'color:#888; font-size:12px; min-width:74px;';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'fallback-pool';
+    input.placeholder = 'backup.pool.example.com:3333';
+    input.value = value || '';
+    input.style.cssText = 'flex:1; margin:0;';
+
+    const mkBtn = function (text, title, fn) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.title = title;
+        b.style.cssText = 'padding:6px 10px; font-size:12px; margin:0; min-width:34px;';
+        b.onclick = fn;
+        return b;
+    };
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(mkBtn('↑', 'Move up', function () {
+        const prev = row.previousElementSibling;
+        if (prev) { container.insertBefore(row, prev); renumberFallbackPools(); }
+    }));
+    row.appendChild(mkBtn('↓', 'Move down', function () {
+        const next = row.nextElementSibling;
+        if (next) { container.insertBefore(next, row); renumberFallbackPools(); }
+    }));
+    row.appendChild(mkBtn('✕', 'Remove', function () {
+        container.removeChild(row);
+        renumberFallbackPools();
+    }));
+
+    container.appendChild(row);
+    renumberFallbackPools();
+}
+
+function renumberFallbackPools() {
+    const rows = document.querySelectorAll('#fallbackPoolList .fallback-pool-row');
+    rows.forEach(function (row, idx) {
+        row.querySelector('.fallback-pool-label').textContent = 'Fallback ' + (idx + 1) + ':';
+    });
+    const btn = document.getElementById('addPoolBtn');
+    if (btn) btn.disabled = rows.length >= MAX_FALLBACK_POOLS;
+}
+
+// ===================== Saved named configurations =====================
+function configMgmtMsg(html) {
+    document.getElementById('configMgmtMessage').innerHTML = html;
+}
+
+function refreshSavedConfigs(selectName) {
+    return fetch('/cgi-bin/listconfigs.cgi')
+        .then(function (r) { return r.json(); })
+        .then(function (names) {
+            const sel = document.getElementById('savedConfigSelect');
+            sel.innerHTML = '';
+            if (!names.length) {
+                const o = document.createElement('option');
+                o.value = '';
+                o.textContent = '-- No saved configurations --';
+                sel.appendChild(o);
+                return;
+            }
+            names.forEach(function (n) {
+                const o = document.createElement('option');
+                o.value = n;
+                o.textContent = n;
+                sel.appendChild(o);
+            });
+            if (selectName && names.indexOf(selectName) !== -1) sel.value = selectName;
+        })
+        .catch(function () {});
+}
+
+function saveConfigAs() {
+    const name = prompt('Save the current configuration as:');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+        configMgmtMsg('<div class="error">❌ Name required.</div>');
+        return;
+    }
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(trimmed)) {
+        configMgmtMsg('<div class="error">❌ Use only letters, digits, hyphen and underscore (max 50).</div>');
+        return;
+    }
+    const existing = Array.prototype.slice
+        .call(document.querySelectorAll('#savedConfigSelect option'))
+        .map(function (o) { return o.value; });
+    if (existing.indexOf(trimmed) !== -1 &&
+        !confirm('"' + trimmed + '" already exists. Overwrite it?')) {
+        return;
+    }
+    fetch('/cgi-bin/saveconfig.cgi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'name=' + encodeURIComponent(trimmed)
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                configMgmtMsg('<div class="success">✅ Saved as "' + d.name + '".</div>');
+                refreshSavedConfigs(d.name);
+            } else {
+                configMgmtMsg('<div class="error">❌ ' + (d.error || 'Save failed') + '</div>');
+            }
+        })
+        .catch(function (e) {
+            configMgmtMsg('<div class="error">❌ Save request failed: ' + e.message + '</div>');
+        });
+}
+
+function loadSavedConfig() {
+    const name = document.getElementById('savedConfigSelect').value;
+    if (!name) { configMgmtMsg('<div class="error">❌ Select a configuration first.</div>'); return; }
+    fetch('/cgi-bin/loadconfig.cgi?name=' + encodeURIComponent(name))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) {
+                configMgmtMsg('<div class="error">❌ ' + (d.error || 'Load failed') + '</div>');
+                return;
+            }
+            const c = d.config || {};
+            isLoadingConfig = true;
+            const setVal = function (id, v) {
+                const el = document.getElementById(id);
+                if (el && v !== undefined) el.value = v;
+            };
+            setVal('miner', c.miner);
+            setVal('wallet', c.wallet);
+            setVal('doge_wallet', c.doge_wallet);
+            setVal('ltc_wallet', c.ltc_wallet);
+            setVal('worker', c.worker);
+            setVal('threads', c.threads);
+            setVal('pool', c.pool);
+            setVal('password', c.password);
+            setVal('gpu_miner', c.gpu_miner);
+            setVal('usbasic_algo', c.usbasic_algo);
+            setVal('ore_keypair', c.ore_keypair);
+            setVal('ore_rpc', c.ore_rpc);
+            setVal('ore_priority_fee', c.ore_priority_fee);
+            setVal('ora_node_url', c.ora_node_url);
+            setVal('ora_api_token', c.ora_api_token);
+            setVal('algorithm', c.algorithm);
+            document.getElementById('cpu_mining').checked = (c.cpu_mining === 'true');
+            document.getElementById('gpu_mining').checked = (c.gpu_mining === 'true');
+            document.getElementById('usbasic_mining').checked = (c.usbasic_mining === 'true');
+            document.getElementById('mysterium_donation_enabled').checked = (c.mysterium_donation_enabled === 'true');
+            document.getElementById('algo_mode').checked = (c.algo_mode === 'true');
+            setFallbackPools([c.pool_fallback_1, c.pool_fallback_2, c.pool_fallback_3, c.pool_fallback_4]
+                .filter(function (p) { return p; }));
+            updateAlgoModeUI();
+            updateMiningModeUI();
+            updateWorkerDetection();
+            document.getElementById('miner').dispatchEvent(new Event('change'));
+            isLoadingConfig = false;
+            configMgmtMsg('<div class="info-box">📂 Loaded "' + name +
+                '" into the form. Press <strong>Save Configuration</strong> to apply it.</div>');
+        })
+        .catch(function (e) {
+            isLoadingConfig = false;
+            configMgmtMsg('<div class="error">❌ Load request failed: ' + e.message + '</div>');
+        });
+}
+
+function deleteSavedConfig() {
+    const name = document.getElementById('savedConfigSelect').value;
+    if (!name) { configMgmtMsg('<div class="error">❌ Select a configuration first.</div>'); return; }
+    if (!confirm('Delete saved configuration "' + name + '"? This cannot be undone.')) return;
+    fetch('/cgi-bin/deleteconfig.cgi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'name=' + encodeURIComponent(name)
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                configMgmtMsg('<div class="success">🗑️ Deleted "' + d.name + '".</div>');
+                refreshSavedConfigs();
+            } else {
+                configMgmtMsg('<div class="error">❌ ' + (d.error || 'Delete failed') + '</div>');
+            }
+        })
+        .catch(function (e) {
+            configMgmtMsg('<div class="error">❌ Delete request failed: ' + e.message + '</div>');
+        });
+}
+
+// Wire up the new controls
+document.getElementById('wallet').addEventListener('input', updateWorkerDetection);
+document.getElementById('wallet').addEventListener('change', updateWorkerDetection);
+document.getElementById('algo_mode').addEventListener('change', updateAlgoModeUI);
+document.getElementById('algorithm').addEventListener('change', updateAlgoModeUI);
+document.getElementById('addPoolBtn').addEventListener('click', function () { addFallbackPool(''); });
+
+// A disabled input is not submitted, and save.cgi would then fall back to its
+// own default worker. Re-enable just long enough for the form to serialise.
+document.getElementById('configForm').addEventListener('submit', function () {
+    document.getElementById('worker').disabled = false;
+}, true);
+
+updateAlgoModeUI();
+renumberFallbackPools();
+updateWorkerDetection();
+refreshSavedConfigs();
+
 loadConfig();
 checkStatus();
 fetchCpuCores();
