@@ -6540,6 +6540,22 @@ case "$MINER" in
 esac
 fi
 
+# Guard: refuse an algorithm the installed cpuminer build cannot mine.
+# The installer's first-choice CPU miner is tpruvot/cpuminer-multi, which has
+# no Argon2 support, so selecting Arionum used to save cleanly, report
+# "Mining started", and then die at launch with "Unknown algo parameter
+# 'argon2d4096'" - success reported at every step while nothing mined.
+# Only JayDDee/cpuminer-opt implements argon2d4096, so which build got
+# installed silently decided whether the coin worked at all.
+# Probing --help keeps this honest for whichever build is present rather than
+# hard-coding an algorithm list that would drift from the binary.
+if [ "$USE_CPUMINER" = "true" ] && [ -x /usr/local/bin/cpuminer ]; then
+    if ! /usr/local/bin/cpuminer --help 2>&1 | grep -qE "^[[:space:]]+${ALGO}[[:space:]]"; then
+        echo "<div class='error'>❌ The installed cpuminer build does not support the '$ALGO' algorithm that $MINER requires, so mining would fail silently at launch. Configuration not applied. Reinstall with a cpuminer build that implements '$ALGO' (JayDDee/cpuminer-opt provides argon2d4096), or choose a different coin.</div>"
+        exit 0
+    fi
+fi
+
 # For Unmineable coins, prepend the coin ticker to the wallet address
 # Also add referral code for Unmineable (dev fee)
 UNMINEABLE_REFERRAL="efz3-b4fb"  # Referral code for Unmineable
