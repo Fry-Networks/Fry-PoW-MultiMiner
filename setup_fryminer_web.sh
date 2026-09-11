@@ -7712,8 +7712,19 @@ CONFIG_FILE="/opt/frynet-config/config.txt"
 PID_FILE="/opt/frynet-config/miner.pid"
 
 if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
-    # Strip ANSI codes for clean parsing
-    CLEAN_LOG=$(sed 's/\x1b\[[0-9;]*m//g; s/\[0m//g; s/\[1;[0-9]*m//g; s/\[0;[0-9]*m//g; s/\[[0-9]*;[0-9]*m//g; s/\[[0-9]*m//g' "$LOG_FILE" 2>/dev/null)
+    # Read a BOUNDED window, not the whole file. miner.log is append-only and
+    # unrotated: it reaches hundreds of megabytes in normal operation. Slurping
+    # it into a shell variable allocated ~450MB of VM on a 2GB board and invoked
+    # the kernel OOM killer, taking the mining stack down with it:
+    #   stats.cgi invoked oom-killer: ... global_oom, task=stats.cgi
+    #   Out of memory: Killed process (stats.cgi) total-vm:448968kB
+    # Every lookup below is a "tail -1"/"last match" query, so the most recent
+    # lines are the only ones that can affect the answer. Cost is now O(1) in
+    # log size instead of O(n).
+    # NOTE: the accepted/rejected counters below consequently report shares
+    # within this window rather than for the lifetime of the log.
+    STATS_LOG_WINDOW=${STATS_LOG_WINDOW:-5000}
+    CLEAN_LOG=$(tail -n "$STATS_LOG_WINDOW" "$LOG_FILE" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g; s/\[0m//g; s/\[1;[0-9]*m//g; s/\[0;[0-9]*m//g; s/\[[0-9]*;[0-9]*m//g; s/\[[0-9]*m//g' 2>/dev/null)
     
     # ========== HASHRATE ==========
     # Method 1: XMRig format - "speed 10s/60s/15m 218.2 220.6 n/a H/s"
