@@ -34,7 +34,10 @@
 set -u
 
 DIR=$(cd "$(dirname "$0")" && pwd)
-SETUP="$DIR/../setup_fryminer_web.sh"
+# FRYPOW_SETUP lets the same assertions run against an alternate installer -- a pre-fix
+# backup (to demonstrate RED) or setup_fryminer_macos.sh, which carries the identical bug.
+SETUP="${FRYPOW_SETUP:-$DIR/../setup_fryminer_web.sh}"
+[ -f "$SETUP" ] || { echo "SKIP: installer not found at $SETUP"; exit 77; }
 
 SB=$(mktemp -d) || { echo "FAIL: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$SB"' EXIT
@@ -164,9 +167,14 @@ else FAIL=1; fi
 # ---- 7. Source guard: no bare ".$WORKER" append may be reintroduced ---------
 #         The [^}] class deliberately excludes the fixed form
 #         ${WORKER:+.$WORKER}, whose ".$WORKER" is followed by "}".
-if grep -qE '\.\$WORKER([^}]|$)' "$SETUP"; then
+#         Lines beginning with a `*"` glob are case PATTERNS, not appends -- the
+#         double-append guard matches on *".$WORKER") and must not be flagged. The
+#         filter is on the shape of the line, so a real append reintroduced anywhere
+#         (including on a case branch's body) is still caught.
+BARE=$(grep -nE '\.\$WORKER([^}]|$)' "$SETUP" | grep -vE '^[0-9]+:[[:space:]]*\*"')
+if [ -n "$BARE" ]; then
     echo "ASSERT FAIL: setup script still appends a bare .\$WORKER:"
-    grep -nE '\.\$WORKER([^}]|$)' "$SETUP" | sed 's/^/    /'
+    printf '%s\n' "$BARE" | sed 's/^/    /'
     FAIL=1
 fi
 

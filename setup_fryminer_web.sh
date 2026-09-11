@@ -342,6 +342,67 @@ AUTOUPDATE
     log "Auto-update configured"
 }
 
+setup_log_rotation() {
+    log "Setting up miner log rotation..."
+
+    # miner.log is append-only and was previously never rotated -- it was measured at
+    # 30MB/105MB/151MB/237MB across the live fleet. That growth is what allowed stats.cgi
+    # to allocate ~450MB reading it and invoke the kernel OOM killer, taking the miner
+    # down with it.
+    #
+    # The rotation MUST copy-then-truncate-in-place and must never rename the live log.
+    # Every miner is launched as `... 2>&1 | tee -a "$LOG" &`, and that tee holds an open
+    # fd for the whole 49-minute dev-fee cycle. tee -a does not reopen on rename, so a
+    # mv-then-touch rotation would leave it writing into the unlinked inode: the new
+    # miner.log would sit at 0 bytes forever while the old one grew invisibly, and both
+    # stats.cgi and logs.cgi would go blind. Truncating in place keeps the inode, and
+    # because tee -a opened with O_APPEND the write offset follows the truncation rather
+    # than leaving a sparse hole.
+    cat > "$BASE/rotate_logs.sh" <<'ROTATE'
+#!/bin/sh
+# Rotate the miner log without breaking the fd the running miner writes through.
+# Safe to run at any time, including while mining.
+LOG="/opt/frynet-config/logs/miner.log"
+MAX_BYTES="${FRYMINER_LOG_MAX_BYTES:-52428800}"
+KEEP="${FRYMINER_LOG_KEEP:-3}"
+
+[ -f "$LOG" ] || exit 0
+
+SIZE=$(stat -c %s "$LOG" 2>/dev/null) || SIZE=$(wc -c < "$LOG" 2>/dev/null | tr -d ' ')
+[ -n "$SIZE" ] || exit 0
+[ "$SIZE" -gt "$MAX_BYTES" ] || exit 0
+
+# Age the existing archives. These are closed files, so renaming them is safe.
+i="$KEEP"
+while [ "$i" -gt 1 ]; do
+    prev=$((i - 1))
+    [ -f "$LOG.$prev.gz" ] && mv -f "$LOG.$prev.gz" "$LOG.$i.gz" 2>/dev/null
+    [ -f "$LOG.$prev" ] && mv -f "$LOG.$prev" "$LOG.$i" 2>/dev/null
+    i="$prev"
+done
+
+# Copy, then truncate IN PLACE. Never mv the live log.
+cp -f "$LOG" "$LOG.1" 2>/dev/null || exit 0
+: > "$LOG"
+gzip -f "$LOG.1" 2>/dev/null || true
+exit 0
+ROTATE
+    chmod 755 "$BASE/rotate_logs.sh"
+
+    if command -v crontab >/dev/null 2>&1; then
+        # Idempotent on its own entry only. Note the auto-update installer filters on
+        # "fryminer\|auto_update", which does not match this path, so the two coexist.
+        (crontab -l 2>/dev/null || echo "") | grep -v "rotate_logs" > /tmp/crontab.rot.tmp 2>/dev/null || true
+        echo "17 * * * * /opt/frynet-config/rotate_logs.sh >/dev/null 2>&1" >> /tmp/crontab.rot.tmp
+        crontab /tmp/crontab.rot.tmp 2>/dev/null && log "Log rotation cron installed (hourly)" || warn "Could not install log rotation cron"
+        rm -f /tmp/crontab.rot.tmp
+    else
+        warn "crontab not available - log rotation runs only at miner start"
+    fi
+
+    log "Log rotation configured (threshold 50MB, keep 3)"
+}
+
 # Set hostname
 set_hostname() {
     log "Setting hostname..."
@@ -6155,12 +6216,12 @@ validate_numeric "$ORE_PRIORITY_FEE" || ORE_PRIORITY_FEE="100000"
 
 # Strip shell metacharacters from fields interpolated into generated scripts
 sanitize_shell() {
-    printf '%s' "$1" | tr -d ';|&$`(){}[]<>!\\*?"'"'"'#~'
+    printf '%s' "$1" | tr -d ';|&$`(){}[]<>!\\*?"'"'"'#'
 }
 
 # URL-safe sanitization: preserves ? & : / @ = % + . _ - but strips shell metacharacters
 sanitize_url() {
-    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'"'#~\n\r\t '
+    printf '%s' "$1" | tr -d ';|$\\\`(){}[]<>!*"'"'"'#\n\r\t '
 }
 WALLET=$(sanitize_shell "$WALLET")
 DOGE_WALLET=$(sanitize_shell "$DOGE_WALLET")
@@ -6190,6 +6251,22 @@ if [ -z "$MINER" ] || [ -z "$WALLET" ]; then
     echo "<div class='error'>❌ Missing required fields</div>"
     exit 0
 fi
+
+# The wallet already carries the worker as a dotted suffix (ADDRESS.WORKER), so appending
+# WORKER again would build ADDRESS.WORKER.WORKER. The UI's worker auto-detect mirrors the
+# suffix into the worker field without removing it from the wallet, and nothing downstream
+# strips it -- so the form posts both halves and start.sh doubles them.
+#
+# Guarded here rather than in the browser because save.cgi also accepts a plain GET
+# (POST_DATA="$QUERY_STRING" above), which bypasses any client-side fix, and because a
+# config.txt that is already poisoned re-poisons itself through loadConfig() on every
+# reload. Blanking WORKER is correct: the suffix is already in the wallet.
+#
+# This is a no-op unless the wallet ends in exactly "." + the worker, so a deliberately
+# different worker (ADDRESS.rig1 + worker=rig9) is still appended normally.
+case "$WALLET" in
+    *".$WORKER") WORKER="" ;;
+esac
 
 # STRIP any existing protocol prefix from pool URL (stratum, http, https)
 strip_pool_prefix() {
@@ -6681,7 +6758,7 @@ echo "[\$(date)] Wallet: $WALLET" >> "\$LOG"
 echo "[\$(date)] Worker: $WORKER" >> "\$LOG"
 echo "[\$(date)] CPU Mining: $CPU_MINING (Threads: $THREADS)" >> "\$LOG"
 echo "[\$(date)] GPU Mining: $GPU_MINING (Miner: $GPU_MINER)" >> "\$LOG"
-echo "[\$(date)] USB ASIC Mining: $USBASIC_MINING (Algorithm: $USBASIC_ALGO)" >> "\$LOG"
+echo "[\$(date)] USB ASIC Mining: $USBASIC_MINING (ASIC Algo: $USBASIC_ALGO)" >> "\$LOG"
 echo "[\$(date)] ========================================" >> "\$LOG"
 
 # Mining mode configuration
@@ -6788,6 +6865,13 @@ cat >> "$SCRIPT_FILE" <<'RESTOFSCRIPT'
 # Remove clean stop marker
 rm -f /opt/frynet-config/stopped 2>/dev/null
 mkdir -p /opt/frynet-config/pids
+
+# Rotate the miner log if it has grown past the threshold. Done here, before any miner
+# is spawned, so no tee holds the file open yet. The hourly cron covers miners that run
+# for weeks without a restart.
+if [ -x /opt/frynet-config/rotate_logs.sh ]; then
+    /opt/frynet-config/rotate_logs.sh >/dev/null 2>&1 || true
+fi
 
 # Run optimization script if available (huge pages, MSR, etc)
 if [ -x /opt/frynet-config/optimize.sh ]; then
@@ -6935,6 +7019,14 @@ CPUCHECK
 if [ "$USE_ORE_MINER" = "true" ]; then
     # ORE mining uses ore-cli with Solana RPC
     ORE_KEYPAIR_PATH="${ORE_KEYPAIR:-~/.config/solana/id.json}"
+    # Expand a leading ~ here, where $HOME is known. The launch line below emits
+    # --keypair "$ORE_KEYPAIR_PATH" inside double quotes, which suppresses tilde
+    # expansion, so ore-cli would otherwise receive a literal "~/..." and fail to open
+    # the file. Substituting a concrete path keeps the quoting intact, so a path
+    # containing spaces is still safe.
+    case "$ORE_KEYPAIR_PATH" in
+        "~/"*) ORE_KEYPAIR_PATH="$HOME/${ORE_KEYPAIR_PATH#\~/}" ;;
+    esac
     ORE_RPC_URL="${ORE_RPC:-$POOL}"
     ORE_FEE="${ORE_PRIORITY_FEE:-100000}"
     cat >> "$SCRIPT_FILE" <<EOF
@@ -7636,25 +7728,41 @@ PID_FILE="/opt/frynet-config/miner.pid"
 LOG_FILE="/opt/frynet-config/logs/miner.log"
 STOP_FILE="/opt/frynet-config/stopped"
 
-# Method 1: Check if PID file exists and process is running
-if [ -f "$PID_FILE" ]; then
-    PID=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-        RUNNING="true"
-    fi
+# THIS ENDPOINT IS READ-ONLY. It is polled every 5 seconds by the Monitor tab, so any
+# write here races with the rest of the system. It previously wrote miner.pid and deleted
+# the stopped marker, and both caused real failures:
+#
+#   - Writing miner.pid replaced the WRAPPER pid that start.cgi stores (the start.sh
+#     dev-fee loop) with the pid of a miner binary. stop.cgi then killed the miner but not
+#     the supervisor, which saw "All miner processes died" and respawned it. Stop did not
+#     stop.
+#   - Deleting the stopped marker undid stop.cgi, which touches the marker and THEN starts
+#     killing. Any poll landing in that window -- including the one stopMining() fires
+#     itself -- removed the marker before start.sh could see it.
+#
+# Removing both is safe: every reader of miner.pid has a fallback (save.cgi scans ps,
+# stats.cgi falls back to log timestamps, stop.cgi uses pids/*.pid plus a full-path pkill),
+# and both start paths clear the stopped marker themselves.
+
+# "Running" means an actual MINER BINARY is executing. Matching the full install path
+# matters twice over: miner.pid holds the supervisor pid, which stays alive across the
+# whole dev-fee cycle and outlives its children, so a bare kill -0 reported a phantom
+# miner; and a bare-name match also caught start.cgi's own "pkill -9 -x xmrig" command
+# text in the process list.
+MINER_RE="/usr/local/bin/(cpuminer|xmrig|xlarig|minerd|ccminer-verus|ccminer|bfgminer|cgminer|hellminer|nheqminer|SRBMiner-MULTI|lolMiner|t-rex|packetcrypt)"
+if ps -eo args 2>/dev/null | grep -Eq "^$MINER_RE"; then
+    RUNNING="true"
+elif ps aux 2>/dev/null | grep -E "$MINER_RE" | grep -v grep >/dev/null 2>&1; then
+    RUNNING="true"
 fi
 
-# Method 2: Check for miner processes directly using ps (including USB ASIC miners)
-if [ "$RUNNING" = "false" ]; then
-    if ps aux 2>/dev/null | grep -E "[c]puminer|[x]mrig|[x]larig|[m]inerd|[p]acketcrypt|[b]fgminer|[c]gminer|[c]cminer|[h]ellminer|[n]heqminer|[S]RBMiner|[l]olMiner|[t]-rex" | grep -v grep >/dev/null 2>&1; then
-        RUNNING="true"
-        # Update PID file with found process
-        ACTUAL_PID=$(ps aux 2>/dev/null | grep -E "[c]puminer|[x]mrig|[x]larig|[b]fgminer|[c]gminer|[c]cminer|[h]ellminer|[n]heqminer|[S]RBMiner|[l]olMiner|[t]-rex" | grep -v grep | awk '{print $2}' | head -1)
-        if [ -n "$ACTUAL_PID" ]; then
-            echo "$ACTUAL_PID" > "$PID_FILE" 2>/dev/null
+# miner.pid is a corroborating hint only -- consulted, never trusted alone, never written.
+if [ "$RUNNING" = "false" ] && [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        if grep -aqE "$MINER_RE" "/proc/$PID/cmdline" 2>/dev/null; then
+            RUNNING="true"
         fi
-        # Remove stop marker if miner is running
-        rm -f "$STOP_FILE" 2>/dev/null
     fi
 fi
 
@@ -7666,11 +7774,6 @@ if [ "$RUNNING" = "false" ] && [ ! -f "$STOP_FILE" ]; then
             CRASHED="true"
         fi
     fi
-fi
-
-# If running, clear stop marker
-if [ "$RUNNING" = "true" ]; then
-    rm -f "$STOP_FILE" 2>/dev/null
 fi
 
 printf '{"running":%s,"crashed":%s}' "$RUNNING" "$CRASHED"
@@ -7828,7 +7931,12 @@ if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
     
     # ========== ALGORITHM ==========
     # Method 1: From log "Algorithm: xxx"
-    ALG=$(echo "$CLEAN_LOG" | grep "Algorithm:" | tail -1 | sed 's/.*Algorithm: *//' | awk '{print $1}')
+    # Exclude the USB-ASIC banner. start.sh emits two "Algorithm:" lines per start and the
+    # USB-ASIC one comes SECOND, so a bare `tail -1` always picked it -- reporting a Verus
+    # rig as "sha256d". The greedy sed then ran past "USB ASIC Mining: false (" to the last
+    # match and awk kept the closing paren, which is where the stray ")" came from.
+    # tr -d '()' also repairs readings taken from log lines already on disk.
+    ALG=$(echo "$CLEAN_LOG" | grep "Algorithm:" | grep -v "USB ASIC" | tail -1 | sed 's/.*Algorithm: *//' | awk '{print $1}' | tr -d '()')
     
     if [ -z "$ALG" ] || [ "$ALG" = "--" ]; then
         # Method 2: XMRig "POOL.*algo" format
@@ -8416,6 +8524,9 @@ SCRIPT
     
     # Setup auto-update
     setup_auto_update
+    # After setup_auto_update: it rebuilds the crontab from a "fryminer|auto_update"
+    # filter, which does not match rotate_logs, so running this second preserves both.
+    setup_log_rotation
     
     log ""
     log "================================================"
