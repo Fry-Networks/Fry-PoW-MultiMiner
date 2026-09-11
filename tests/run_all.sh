@@ -22,6 +22,7 @@ run test_update_check.sh
 run test_save_hostile_lock.sh
 run test_cpuminer_flags.sh
 run test_cpuminer_algo_supported.sh
+run test_worker_suffix_no_trailing_dot.sh
 run test_startcgi_pkill_selfmatch.sh
 run test_miner_alive.sh
 

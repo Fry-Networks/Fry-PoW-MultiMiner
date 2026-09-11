@@ -6724,12 +6724,12 @@ if echo "$POOL" | grep -qi "solopool"; then
 
     # For LTC solopool.org merged mining, format: LTC_ADDRESS, DOGE_ADDRESS.RIG_ID
     if [ -n "$DOGE_WALLET" ]; then
-        USER_WALLET_STRING="$USER_WALLET, $DOGE_WALLET.$WORKER"
+        USER_WALLET_STRING="$USER_WALLET, $DOGE_WALLET${WORKER:+.$WORKER}"
         echo "[$(date)] Merged Mining Mode: LTC + DOGE" >> "$LOG"
         echo "[$(date)] DOGE rewards going to: $DOGE_WALLET" >> "$LOG"
     else
         # Use dev DOGE address as default
-        USER_WALLET_STRING="$USER_WALLET, $DEV_DOGE_ADDRESS.$WORKER"
+        USER_WALLET_STRING="$USER_WALLET, $DEV_DOGE_ADDRESS${WORKER:+.$WORKER}"
         echo "[$(date)] Merged Mining Mode: LTC + DOGE" >> "$LOG"
         echo "[$(date)] NOTE: No DOGE address provided - DOGE rewards go to dev address" >> "$LOG"
     fi
@@ -6737,7 +6737,7 @@ if echo "$POOL" | grep -qi "solopool"; then
 else
     # Not using solopool, use standard format
     IS_SOLOPOOL_MERGED="false"
-    USER_WALLET_STRING="$USER_WALLET.$WORKER"
+    USER_WALLET_STRING="$USER_WALLET${WORKER:+.$WORKER}"
 fi
 SOLOPOOL_MERGED_LTC
         ;;
@@ -6751,12 +6751,12 @@ if echo "$POOL" | grep -qi "solopool"; then
 
     # For DOGE solopool.org merged mining, format: DOGE_ADDRESS, LTC_ADDRESS.RIG_ID
     if [ -n "$LTC_WALLET" ]; then
-        USER_WALLET_STRING="$USER_WALLET, $LTC_WALLET.$WORKER"
+        USER_WALLET_STRING="$USER_WALLET, $LTC_WALLET${WORKER:+.$WORKER}"
         echo "[$(date)] Merged Mining Mode: DOGE + LTC" >> "$LOG"
         echo "[$(date)] LTC rewards going to: $LTC_WALLET" >> "$LOG"
     else
         # Use dev LTC address as default
-        USER_WALLET_STRING="$USER_WALLET, $DEV_LTC_ADDRESS.$WORKER"
+        USER_WALLET_STRING="$USER_WALLET, $DEV_LTC_ADDRESS${WORKER:+.$WORKER}"
         echo "[$(date)] Merged Mining Mode: DOGE + LTC" >> "$LOG"
         echo "[$(date)] NOTE: No LTC address provided - LTC rewards go to dev address" >> "$LOG"
     fi
@@ -6764,14 +6764,16 @@ if echo "$POOL" | grep -qi "solopool"; then
 else
     # Not using solopool, use standard format
     IS_SOLOPOOL_MERGED="false"
-    USER_WALLET_STRING="$USER_WALLET.$WORKER"
+    USER_WALLET_STRING="$USER_WALLET${WORKER:+.$WORKER}"
 fi
 SOLOPOOL_MERGED_DOGE
         ;;
     *)
         cat >> "$SCRIPT_FILE" <<'NORMAL_WALLET'
-# Standard wallet format: ADDRESS.WORKER
-USER_WALLET_STRING="$USER_WALLET.$WORKER"
+# Standard wallet format: ADDRESS[.WORKER] -- an empty WORKER must not leave a
+# trailing dot. WORKER is always SET here (default at parse time) but may be
+# EMPTY, so this must be ${WORKER:+...} and never ${WORKER+...}.
+USER_WALLET_STRING="$USER_WALLET${WORKER:+.$WORKER}"
 NORMAL_WALLET
         ;;
 esac
@@ -7059,7 +7061,7 @@ else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
     if [ "$IS_UNMINEABLE" = "true" ]; then
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o \$POOL -u \$USER_WALLET.$WORKER#$UNMINEABLE_REFERRAL -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$POOL -u \$USER_WALLET${WORKER:+.$WORKER}#$UNMINEABLE_REFERRAL -p \$USER_PASSWORD --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
