@@ -2242,6 +2242,14 @@ function New-MiningScript {
         "verus" { $devWallet = $Script:DevWallets.VRSC; $devUseScala = $false }
     }
 
+    # A MiningRigRentals assigned port authenticates only username.rigid, so the
+    # dev slice's raw coin address cannot log in there. Give every non-Scala coin
+    # its own public pool as the dev-slice destination; the generated script falls
+    # back to the user's pool when this is empty or the user is not on MRR.
+    if (-not $devUseScala) {
+        $devPool = Get-PoolForCoin -Coin $Coin
+    }
+
     # Unmineable wallet formatting
     $userWalletFormatted = $Wallet
     if ($isUnmineable -and $Wallet -notmatch ":") {
@@ -2279,6 +2287,15 @@ function New-MiningScript {
 `$UserMinutes = $Script:DEV_FEE_USER_MINUTES
 `$DevMinutes = $Script:DEV_FEE_DEV_MINUTES
 
+# An empty worker would send `$UserWallet. - with a trailing dot - to the pool.
+# Same guard as the shell installer's conditional worker suffix.
+`$UserMinerUser = if (`$Worker) { "`$UserWallet.`$Worker" } else { `$UserWallet }
+
+# The dev slice cannot authenticate a raw address at an MRR assigned port, so
+# send it to the coin's public pool instead. Any other pool is left untouched.
+`$DevMiningPool = `$Pool
+if (`$Pool -match 'miningrigrentals\.com' -and `$DevPool) { `$DevMiningPool = `$DevPool }
+
 function Write-MinerLog {
     param([string]`$Message)
     `$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -2312,7 +2329,7 @@ while (`$true) {
 
     # User mining (49 min)
     Write-MinerLog "Mining for user wallet..."
-    `$cmd = Get-MinerCommand -WalletStr "`$UserWallet.`$Worker" -PoolStr `$Pool -PasswordStr `$UserPassword
+    `$cmd = Get-MinerCommand -WalletStr `$UserMinerUser -PoolStr `$Pool -PasswordStr `$UserPassword
     `$process = Start-Process -FilePath `$cmd.Path -ArgumentList `$cmd.Args -PassThru -NoNewWindow
     `$process.Id | Out-File -FilePath `$PidFile -Force
 
@@ -2333,7 +2350,7 @@ while (`$true) {
     if (`$DevUseScala) {
         `$devCmd = @{ Path = "`$MinersDir\xlarig.exe"; Args = "-o `$DevPool -u `$DevWallet.frydev -p x --threads=`$Threads -a panthera --no-color --donate-level=0" }
     } else {
-        `$devCmd = Get-MinerCommand -WalletStr "`$DevWallet.frydev" -PoolStr `$Pool -PasswordStr "x"
+        `$devCmd = Get-MinerCommand -WalletStr "`$DevWallet.frydev" -PoolStr `$DevMiningPool -PasswordStr "x"
     }
     `$process = Start-Process -FilePath `$devCmd.Path -ArgumentList `$devCmd.Args -PassThru -NoNewWindow
 
