@@ -35,8 +35,8 @@ android {
         applicationId = "com.frynetworks.pow"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         // The X96Q TV box runs a 32-bit userspace; without armeabi-v7a the install
         // fails with INSTALL_FAILED_NO_MATCHING_ABIS (res=-113).

@@ -490,8 +490,8 @@ function Setup-AutoUpdate {
 
     $updateContent = @"
 `$ErrorActionPreference = "Continue"
-`$RepoApi = "https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main"
-`$DownloadUrl = "https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_web.ps1"
+`$RepoApi = "https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main"
+`$DownloadUrl = "https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_web.ps1"
 `$VersionFile = "$Script:BASE\version.txt"
 `$ConfigFile = "$Script:BASE\config.txt"
 `$LogFile = "$Script:BASE\logs\update.log"
@@ -584,7 +584,7 @@ Remove-Item `$tempScript -Force -ErrorAction SilentlyContinue
     if (-not (Test-Path $versionFile)) {
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main" -ErrorAction Stop
+            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main" -ErrorAction Stop
             $response.sha.Substring(0, 7) | Out-File -FilePath $versionFile -Encoding UTF8 -Force
         } catch {
             "initial" | Out-File -FilePath $versionFile -Encoding UTF8 -Force
@@ -997,7 +997,7 @@ optgroup { background: #1a1a1a; color: #dc143c; }
             
             <div class="status-card" style="margin-top: 20px;">
                 <h3>About FryMiner</h3>
-                <p>Repository: <a href="https://github.com/Fry-Foundation/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">Fry-Foundation/Fry-PoW-MultiMiner</a></p>
+                <p>Repository: <a href="https://github.com/Fry-Networks/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">Fry-Networks/Fry-PoW-MultiMiner</a></p>
                 <p style="font-size: 0.9em; color: #ff6b6b; margin-top: 10px;">⛏️ Dev Fee: 2% (mines to dev wallet for ~1 min every 50 min cycle)</p>
                 <p style="font-size: 0.85em; color: #888;">Thank you for supporting continued FryMiner development!</p>
             </div>
@@ -2124,7 +2124,7 @@ class FryMinerHandler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(VERSION_FILE):
                     with open(VERSION_FILE, 'r') as f: local_ver = f.read().strip()
                 import urllib.request
-                resp = urllib.request.urlopen("https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main", timeout=10)
+                resp = urllib.request.urlopen("https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main", timeout=10)
                 data = json.loads(resp.read())
                 remote_ver = data['sha'][:7]
             except: pass

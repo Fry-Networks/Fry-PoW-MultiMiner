@@ -64,7 +64,7 @@ FryMiner is a comprehensive setup script that installs and configures CPU mining
 
 ```bash
 # Download the setup script
-wget https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh
+wget https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_web.sh
 
 # Make it executable
 chmod +x setup_fryminer_web.sh
@@ -79,7 +79,7 @@ After installation, access the web interface at `http://YOUR_IP:8080`
 
 ```bash
 # Download the macOS setup script
-curl -O https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh
+curl -O https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh
 
 # Make it executable
 chmod +x setup_fryminer_macos.sh
@@ -94,7 +94,7 @@ After installation, access the web interface at `http://localhost:8080`
 
 ```powershell
 # Download the setup script
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_web.ps1" -OutFile "setup_fryminer_web.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_web.ps1" -OutFile "setup_fryminer_web.ps1"
 
 # Run as Administrator
 powershell -ExecutionPolicy Bypass -File setup_fryminer_web.ps1

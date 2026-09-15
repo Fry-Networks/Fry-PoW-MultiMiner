@@ -422,8 +422,8 @@ setup_auto_update() {
 #!/bin/bash
 # FryMiner Automatic Update Script for macOS
 
-REPO_API="https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main"
-DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh"
+REPO_API="https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main"
+DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh"
 VERSION_FILE="$HOME/.fryminer/version.txt"
 CONFIG_FILE="$HOME/.fryminer/config.txt"
 LOG_FILE="$HOME/.fryminer/logs/update.log"
@@ -997,7 +997,7 @@ optgroup { background: #1a1a1a; color: #dc143c; }
             
             <div class="status-card" style="margin-top: 20px;">
                 <h3>About FryMiner</h3>
-                <p>Repository: <a href="https://github.com/Fry-Foundation/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">Fry-Foundation/Fry-PoW-MultiMiner</a></p>
+                <p>Repository: <a href="https://github.com/Fry-Networks/Fry-PoW-MultiMiner" target="_blank" style="color: #ff6b6b;">Fry-Networks/Fry-PoW-MultiMiner</a></p>
                 <p style="font-size: 0.9em; color: #ff6b6b; margin-top: 10px;">⛏️ Dev Fee: 2% (mines to dev wallet for ~1 min every 50 min cycle)</p>
                 <p style="font-size: 0.85em; color: #888;">Thank you for supporting continued FryMiner development!</p>
             </div>
@@ -3626,8 +3626,8 @@ echo "Content-type: application/json"
 echo ""
 
 ACTION="${QUERY_STRING:-check}"
-REPO_API="https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main"
-DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Foundation/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh"
+REPO_API="https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main"
+DOWNLOAD_URL="https://raw.githubusercontent.com/Fry-Networks/Fry-PoW-MultiMiner/main/setup_fryminer_macos.sh"
 VERSION_FILE="$HOME/.fryminer/version.txt"
 CONFIG_FILE="$HOME/.fryminer/config.txt"
 CONFIG_BACKUP="$HOME/.fryminer/config.txt.backup"
@@ -4114,7 +4114,7 @@ main() {
 
     # Save initial version
     if [[ ! -f "$BASE/version.txt" ]]; then
-        CURRENT_VER=$(curl -s --connect-timeout 5 "https://api.github.com/repos/Fry-Foundation/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
+        CURRENT_VER=$(curl -s --connect-timeout 5 "https://api.github.com/repos/Fry-Networks/Fry-PoW-MultiMiner/commits/main" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4 | head -c 7)
         if [[ -n "$CURRENT_VER" ]]; then
             echo "$CURRENT_VER" > "$BASE/version.txt"
         else
