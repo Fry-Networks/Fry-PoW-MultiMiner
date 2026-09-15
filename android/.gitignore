@@ -6,6 +6,7 @@ local.properties
 *.aar
 keystore/
 keystore.properties
+frypow.local.properties
 .cxx/
 .idea/
 *.iml

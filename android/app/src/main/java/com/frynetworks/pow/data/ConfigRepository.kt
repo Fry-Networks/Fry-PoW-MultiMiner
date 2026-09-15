@@ -37,13 +37,19 @@ class ConfigRepository(context: Context) {
 
     private val defaults = MiningConfig()
 
+    /** Stable for the life of the install; read once rather than on every emission. */
+    private val deviceWorker: String by lazy { DeviceWorkerName.forDevice(context) }
+
     val config: Flow<MiningConfig> = store.data.map { p ->
         MiningConfig(
             coinId = p[Keys.COIN] ?: defaults.coinId,
             wallet = p[Keys.WALLET] ?: defaults.wallet,
             dogeWallet = p[Keys.DOGE_WALLET] ?: defaults.dogeWallet,
             ltcWallet = p[Keys.LTC_WALLET] ?: defaults.ltcWallet,
-            worker = p[Keys.WORKER] ?: defaults.worker,
+            // Resolved on read, so an install that already stored the old shared
+            // default is repaired on upgrade. The value is written back on the next
+            // save like any other field.
+            worker = DeviceWorkerName.resolve(p[Keys.WORKER], deviceWorker),
             threads = p[Keys.THREADS] ?: defaults.threads,
             pool = p[Keys.POOL] ?: defaults.pool,
             password = p[Keys.PASSWORD] ?: defaults.password,

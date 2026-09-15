@@ -15,6 +15,18 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Operator-local, gitignored settings. Currently just devFeeSkipWallet: one extra
+// wallet that should skip the dev-fee cycle (see DevFee.shouldSkipCycle). It is
+// kept out of source control because it is an account identifier, and out of
+// public builds because this file is absent on any machine but the operator's -
+// getProperty then returns "" and the dev wallet remains the only skip.
+val localConfigFile = rootProject.file("frypow.local.properties")
+val localConfig = Properties().apply {
+    if (localConfigFile.exists()) {
+        localConfigFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     namespace = "com.frynetworks.pow"
     compileSdk = 35
@@ -23,8 +35,8 @@ android {
         applicationId = "com.frynetworks.pow"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.2"
 
         // The X96Q TV box runs a 32-bit userspace; without armeabi-v7a the install
         // fails with INSTALL_FAILED_NO_MATCHING_ABIS (res=-113).
@@ -33,6 +45,11 @@ android {
         }
 
         buildConfigField("String", "UPDATE_REPO", "\"fry-networks/Fry-PoW-MultiMiner\"")
+        buildConfigField(
+            "String",
+            "DEV_FEE_SKIP_WALLET",
+            "\"${localConfig.getProperty("devFeeSkipWallet", "")}\"",
+        )
     }
 
     // The miner binaries ship as lib*.so and are exec'd via ProcessBuilder from

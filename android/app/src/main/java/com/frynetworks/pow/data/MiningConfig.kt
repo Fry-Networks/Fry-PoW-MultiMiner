@@ -14,7 +14,10 @@ data class MiningConfig(
     val wallet: String = "",
     val dogeWallet: String = "",
     val ltcWallet: String = "",
-    val worker: String = "worker1",
+    // No literal default: a shared one made every install report the same worker and
+    // collapsed a user's devices into one row on the pool. ConfigRepository fills this
+    // in from DeviceWorkerName, which differs per device.
+    val worker: String = "",
     val threads: Int = 2,
     val pool: String = "",
     val password: String = "x",

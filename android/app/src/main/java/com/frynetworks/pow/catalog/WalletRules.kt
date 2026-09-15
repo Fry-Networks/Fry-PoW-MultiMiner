@@ -21,10 +21,16 @@ object WalletRules {
     fun minerUser(coin: Coin, wallet: String, worker: String): String {
         val base = effectiveWallet(coin, wallet)
         val rig = worker.trim().ifEmpty { "worker1" }
+        // The wallet often already carries the rig as a dotted suffix - MiningRigRentals'
+        // `username.rigid` form, and anything pasted from a pool's own instructions.
+        // Appending again would build ADDRESS.RIG.RIG, which the pool reads as a different
+        // worker. Same guard the Linux panel applies in save.cgi. A deliberately different
+        // worker (ADDRESS.rig1 + worker=rig9) is still appended normally.
+        val suffixed = if (base.endsWith(".$rig")) base else "$base.$rig"
         return if (coin.group == CoinGroup.UNMINEABLE) {
-            "$base.$rig#$UNMINEABLE_REFERRAL"
+            "$suffixed#$UNMINEABLE_REFERRAL"
         } else {
-            "$base.$rig"
+            suffixed
         }
     }
 }
