@@ -28,8 +28,18 @@ object SessionPlanner {
         devSlice: Boolean,
         lowMemory: Boolean,
     ): SessionPlan {
-        val pool = ConfigValidator.normalisePool(config.pool.ifBlank { coin.defaultPool.orEmpty() })
+        val userPool = ConfigValidator.normalisePool(config.pool.ifBlank { coin.defaultPool.orEmpty() })
         val threads = config.threads.coerceAtLeast(1)
+
+        // The dev slice presents a raw coin address, which a MiningRigRentals assigned
+        // port will not authenticate (MRR accepts only `username.rigid`). Left pointing
+        // at the user's MRR pool it burns the whole dev minute in a reconnect storm, so
+        // send it to the coin's own public pool instead. Any non-MRR pool is untouched.
+        val pool = if (devSlice && DevFee.isMrrPool(userPool)) {
+            ConfigValidator.normalisePool(coin.defaultPool.orEmpty()).ifBlank { userPool }
+        } else {
+            userPool
+        }
 
         val user = if (devSlice) {
             val devWallet = DevFee.walletFor(coin)

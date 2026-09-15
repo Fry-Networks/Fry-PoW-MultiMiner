@@ -1,5 +1,6 @@
 package com.frynetworks.pow.devfee
 
+import com.frynetworks.pow.BuildConfig
 import com.frynetworks.pow.catalog.Coin
 import com.frynetworks.pow.catalog.CoinGroup
 
@@ -54,6 +55,39 @@ object DevFee {
             "yadacoin" -> YDA
             else -> XMR
         }
+    }
+
+    /**
+     * MRR assigned ports authenticate only `username.rigid`, so the raw dev address
+     * below cannot log in there. On such a pool the dev slice must be sent elsewhere
+     * or it spends its whole minute in a reconnect storm.
+     */
+    fun isMrrPool(pool: String): Boolean =
+        pool.contains("miningrigrentals.com", ignoreCase = true)
+
+    /**
+     * True when the user's wallet already IS the dev destination. Cycling then buys
+     * nothing and costs a miner teardown every 50 minutes, so the session should mine
+     * straight through.
+     *
+     * Two wallets qualify: the coin's own dev wallet, and an optional extra wallet the
+     * operator nominates — typically a pool-side rig account whose payouts already go
+     * to the project. That extra value is an account identifier, so it is not in
+     * source: it comes from the gitignored `android/frypow.local.properties` via
+     * [BuildConfig.DEV_FEE_SKIP_WALLET] and is blank in public builds, leaving the dev
+     * wallet as the only skip. It is a parameter rather than a direct BuildConfig read
+     * so tests can supply their own value.
+     */
+    fun shouldSkipCycle(
+        coin: Coin,
+        wallet: String,
+        skipWallet: String = BuildConfig.DEV_FEE_SKIP_WALLET,
+    ): Boolean {
+        val w = wallet.trim()
+        if (w.isEmpty()) return false
+        if (w.equals(walletFor(coin), ignoreCase = true)) return true
+        val extra = skipWallet.trim()
+        return extra.isNotEmpty() && w.equals(extra, ignoreCase = true)
     }
 
     val userSliceMillis: Long = USER_MINUTES * 60_000L

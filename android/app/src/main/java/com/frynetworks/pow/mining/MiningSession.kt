@@ -49,6 +49,15 @@ class MiningSession(
         var devSlice = false
         var announced = false
 
+        // When the user's wallet already IS the dev destination, rotating would pay the
+        // dev fee from a wallet to itself and cost a process teardown every 50 minutes.
+        // Mine straight through instead. The loop below still restarts the miner if it
+        // dies, and requestStop() still tears it down, so nothing else changes.
+        val skipCycle = DevFee.shouldSkipCycle(coin, config.wallet)
+        if (skipCycle) {
+            logBuffer.append("[frypow] wallet is the dev destination - mining continuously, no dev-fee cycle")
+        }
+
         try {
             while (isActive && !stopRequested) {
                 val plan = SessionPlanner.plan(binary, coin, config, devSlice, lowMemory)
@@ -106,7 +115,11 @@ class MiningSession(
                     }
                 }
 
-                val sliceMs = if (devSlice) DevFee.devSliceMillis else DevFee.userSliceMillis
+                val sliceMs = when {
+                    skipCycle -> CONTINUOUS_SLICE_MS
+                    devSlice -> DevFee.devSliceMillis
+                    else -> DevFee.userSliceMillis
+                }
                 val exitCode = withTimeoutOrNull(sliceMs) {
                     runInterruptible { process.waitFor() }
                 }
@@ -128,7 +141,7 @@ class MiningSession(
                 terminate(process)
                 drain.cancelAndJoin()
                 current = null
-                devSlice = !devSlice
+                if (!skipCycle) devSlice = !devSlice
             }
         } finally {
             current?.let { terminate(it) }
@@ -155,6 +168,8 @@ class MiningSession(
     }
 
     private companion object {
+        /** Effectively unbounded: one miner process, no timed rotation. */
+        const val CONTINUOUS_SLICE_MS = 365L * 24 * 60 * 60 * 1000
         const val STATS_INTERVAL_MS = 5_000L
         const val TERMINATE_GRACE_MS = 3_000L
     }
