@@ -6669,6 +6669,11 @@ STARTSCRIPT
 DEV_USE_SCALA=false
 DEV_SCALA_WALLET="Ssy2BnsAcJUVZZ2kTiywf61bvYjvPosXzaBcaft9RSvaNNKsFRkcKbaWjMotjATkSbSmeSdX2DAxc1XxpcdxUBGd41oCwwfetG"
 DEV_SCALA_POOL="pool.scalaproject.io:3333"
+# Public pool for the dev-fee slice, used when the miner is pointed at a
+# MiningRigRentals assigned port (MRR authenticates only username.rigid, so a
+# raw dev address cannot authenticate there). Coins whose dev fee is routed to
+# Scala inherit DEV_SCALA_POOL; the rest are set in the case block below.
+DEV_POOL_PUBLIC_FOR_COIN="$DEV_SCALA_POOL"
 
 case "$MINER" in
     xmr|xmr-lotto)
@@ -6683,27 +6688,35 @@ case "$MINER" in
         ;;
     ltc|ltc-lotto)
         DEV_WALLET_FOR_COIN="ltc1qrdc0wqzs3cwuhxxzkq2khepec2l3c6uhd8l9jy"
+        DEV_POOL_PUBLIC_FOR_COIN="stratum.aikapool.com:7900"
         ;;
     btc|btc-lotto)
         DEV_WALLET_FOR_COIN="bc1qr6ldduupwn4dtqq4dwthv4vp3cg2dx7u3mcgva"
+        DEV_POOL_PUBLIC_FOR_COIN="pool.btc.com:3333"
         ;;
     bch|bch-lotto)
         DEV_WALLET_FOR_COIN="qrsvjp5987h57x8e6tnv430gq4hnq4jy5vf8u5x4d9"
+        DEV_POOL_PUBLIC_FOR_COIN=""
         ;;
     doge|doge-lotto)
         DEV_WALLET_FOR_COIN="D5nsUsiivbNv2nmuNE9x2ybkkCTEL4ceHj"
+        DEV_POOL_PUBLIC_FOR_COIN="prohashing.com:3332"
         ;;
     dash)
         DEV_WALLET_FOR_COIN="Xff5VZsVpFxpJYazyQ8hbabzjWAmq1TqPG"
+        DEV_POOL_PUBLIC_FOR_COIN="dash.suprnova.cc:9989"
         ;;
     dcr)
         DEV_WALLET_FOR_COIN="DsTSHaQRwE9bibKtq5gCtaYZXSp7UhzMiWw"
+        DEV_POOL_PUBLIC_FOR_COIN="dcr.suprnova.cc:3252"
         ;;
     kda)
         DEV_WALLET_FOR_COIN="k:05178b77e1141ca2319e66cab744e8149349b3f140a676624f231314d483f7a3"
+        DEV_POOL_PUBLIC_FOR_COIN="pool.woolypooly.com:3112"
         ;;
     dero)
         DEV_WALLET_FOR_COIN="dero1qysrv5fp2xethzatpdf80umh8yu2nk404tc3cw2lwypgynj3qvhtgqq294092"
+        DEV_POOL_PUBLIC_FOR_COIN="dero-node-sk.mysrv.cloud:10300"
         ;;
     zephyr)
         # Zephyr (RandomX) - route dev fee to Scala
@@ -6717,6 +6730,7 @@ case "$MINER" in
         ;;
     verus)
         DEV_WALLET_FOR_COIN="RRhFqT2bfXQmsnqtyrVxikhy94KqnVf5nt"
+        DEV_POOL_PUBLIC_FOR_COIN="pool.verus.io:9999"
         ;;
     salvium)
         # Salvium (RandomX) - route dev fee to Scala
@@ -6750,6 +6764,26 @@ case "$MINER" in
         ;;
 esac
 
+# Skip the dev-fee cycle when the user is already mining to the dev
+# destination - paying a dev fee from a wallet to itself gains nothing and
+# costs a miner teardown every 50 minutes.
+#
+# Besides the coin's own dev wallet, an operator may nominate one more wallet
+# that should also skip (for example a pool-side rig account whose payouts
+# already go to the project). That value is deliberately NOT in the source:
+# export FRY_DEV_FEE_SKIP_WALLET, or write the wallet to
+#   /opt/frynet-config/devfee-skip-wallet
+# When unset, only the dev wallet itself skips.
+DEV_FEE_SKIP_WALLET="${FRY_DEV_FEE_SKIP_WALLET:-}"
+if [ -z "$DEV_FEE_SKIP_WALLET" ] && [ -r /opt/frynet-config/devfee-skip-wallet ]; then
+    DEV_FEE_SKIP_WALLET=$(tr -d ' \t\r\n' < /opt/frynet-config/devfee-skip-wallet 2>/dev/null)
+fi
+DEV_FEE_SKIP_FOR_HOST="false"
+if [ "$WALLET" = "$DEV_WALLET_FOR_COIN" ]; then
+    DEV_FEE_SKIP_FOR_HOST="true"
+elif [ -n "$DEV_FEE_SKIP_WALLET" ] && [ "$WALLET" = "$DEV_FEE_SKIP_WALLET" ]; then
+    DEV_FEE_SKIP_FOR_HOST="true"
+fi
 cat >> "$SCRIPT_FILE" <<EOF
 echo "[\$(date)] Coin: $MINER" >> "\$LOG"
 echo "[\$(date)] Pool: $POOL" >> "\$LOG"
@@ -6782,6 +6816,8 @@ LTC_WALLET="$LTC_WALLET"
 WORKER="$WORKER"
 USER_PASSWORD="$PASSWORD"
 DEV_WALLET="$DEV_WALLET_FOR_COIN"
+DEV_POOL_PUBLIC="$DEV_POOL_PUBLIC_FOR_COIN"
+DEV_FEE_SKIP="$DEV_FEE_SKIP_FOR_HOST"
 USER_MINUTES=49
 DEV_MINUTES=1
 
@@ -7002,6 +7038,24 @@ while true; do
 
     # Pick a reachable pool for this cycle (no-op when no fallbacks configured)
     select_pool
+
+    # MiningRigRentals assigned ports authenticate only `username.rigid`, so the
+    # raw dev address fails auth there and burns the whole dev minute in a
+    # client.reconnect storm. Send the dev slice to the coin's public pool
+    # instead. Decided here rather than at save time because select_pool() can
+    # fail over mid-run. Any non-MRR pool keeps the previous behaviour exactly.
+    case "$POOL" in
+        *miningrigrentals.com*)
+            if [ -n "$DEV_POOL_PUBLIC" ]; then
+                DEV_POOL="$DEV_POOL_PUBLIC"
+            else
+                DEV_POOL="$POOL"
+            fi
+            ;;
+        *)
+            DEV_POOL="$POOL"
+            ;;
+    esac
 
     # ========== USER MINING (98% - 49 minutes) ==========
     echo "[$(date)] Mining for user wallet..." >> "$LOG"
@@ -7252,7 +7306,15 @@ USBASICEND
 cat >> "$SCRIPT_FILE" <<'EOF'
 
     # Wait for user mining period (49 minutes = 2940 seconds)
-    WAIT_TIME=$((USER_MINUTES * 60))
+    # With the dev fee skipped there is no reason to end the slice on a timer;
+    # an unbounded wait keeps one miner process alive indefinitely. The loop below
+    # still breaks if the miner dies, so crash-respawn and the stop marker both
+    # keep working.
+    if [ "$DEV_FEE_SKIP" = "true" ]; then
+        WAIT_TIME=31536000
+    else
+        WAIT_TIME=$((USER_MINUTES * 60))
+    fi
     WAITED=0
     while [ $WAITED -lt $WAIT_TIME ]; do
         # Check every 10 seconds if we should stop
@@ -7287,6 +7349,10 @@ cat >> "$SCRIPT_FILE" <<'EOF'
         exit 0
     fi
 
+    # Dev fee skipped for this configuration: go straight back to user mining.
+    if [ "$DEV_FEE_SKIP" = "true" ]; then
+        continue
+    fi
     # ========== DEV FEE MINING (2% - 1 minute) ==========
     echo "[$(date)] Dev fee mining (2%)..." >> "$LOG"
     CPU_PID=""
@@ -7344,12 +7410,12 @@ DEVVERUS_DETECT
         if [ -n "\$VERUS_MINER" ]; then
             case "\$VERUS_MINER_TYPE" in
                 ccminer)
-                    "\$VERUS_MINER" -a verus -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
+                    "\$VERUS_MINER" -a verus -o stratum+tcp://\$DEV_POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
                     echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
                 nheqminer)
-                    "\$VERUS_MINER" -v -l \$POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
+                    "\$VERUS_MINER" -v -l \$DEV_POOL -u \$DEV_WALLET.frydev -p x -t $THREADS 2>&1 | tee -a "\$LOG" &
                     CPU_PID=\$!
                     echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
                     ;;
@@ -7358,7 +7424,7 @@ DEVVERUS_DETECT
 EOF
 elif [ "$USE_CPUMINER" = "true" ]; then
     cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
+        /usr/local/bin/cpuminer --algo=$ALGO -o stratum+tcp://\$DEV_POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS --retries 10 --retry-pause 30 --timeout 300 >> "\$LOG" 2>&1 &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -7374,13 +7440,13 @@ else
     XMRIG_OPTS="--cpu-priority 5 --randomx-no-numa"
     if [ "$IS_UNMINEABLE" = "true" ]; then
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o \$POOL -u \$DEV_WALLET.frydev#$UNMINEABLE_REFERRAL -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$DEV_POOL -u \$DEV_WALLET.frydev#$UNMINEABLE_REFERRAL -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
     else
         cat >> "$SCRIPT_FILE" <<EOF
-        /usr/local/bin/xmrig -o \$POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
+        /usr/local/bin/xmrig -o \$DEV_POOL -u \$DEV_WALLET.frydev -p x --threads=$THREADS -a $ALGO --no-color --donate-level=0 $XMRIG_OPTS 2>&1 | tee -a "\$LOG" &
         CPU_PID=\$!
         echo "\$CPU_PID" > /opt/frynet-config/pids/cpu.pid
 EOF
@@ -7422,7 +7488,7 @@ cat >> "$SCRIPT_FILE" <<'DEVGPUMID2'
 DEVGPUMID2
 
 cat >> "$SCRIPT_FILE" <<EOF
-                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x 2>&1 | tee -a "\$LOG" &
+                /usr/local/bin/t-rex -a $ALGO -o stratum+tcp://\$DEV_POOL -u \$DEV_WALLET.frydev -p x 2>&1 | tee -a "\$LOG" &
                 GPU_PID=\$!
                 echo "\$GPU_PID" > /opt/frynet-config/pids/gpu.pid
 EOF
@@ -7441,11 +7507,11 @@ DEVUSBASICCHECK
 
 cat >> "$SCRIPT_FILE" <<EOF
         if [ -x /usr/local/bin/bfgminer ]; then
-            /usr/local/bin/bfgminer -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            /usr/local/bin/bfgminer -o stratum+tcp://\$DEV_POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         elif command -v bfgminer >/dev/null 2>&1; then
-            bfgminer -o stratum+tcp://\$POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
+            bfgminer -o stratum+tcp://\$DEV_POOL -u \$DEV_WALLET.frydev -p x --algo \$USBASIC_ALGO_TYPE --scan-serial all --no-getwork --no-gbt -T 2>&1 | tee -a "\$LOG" &
             ASIC_PID=\$!
             echo "\$ASIC_PID" > /opt/frynet-config/pids/asic.pid
         fi
