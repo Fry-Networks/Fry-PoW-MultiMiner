@@ -152,4 +152,21 @@ This release includes active hardening:
 
 ## License
 
+Copyright (C) 2026 Fry Networks LLC
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details. The full
+license text is in [LICENSE](LICENSE).
+
+The miner binaries bundled with the Android app and downloaded by the installers
+(xmrig, XLArig, cpuminer-multi, ccminer) are GPL-licensed by their respective
+authors; see `android/build-native/README.md` for the upstream sources and the
+exact revisions used.
+
 Open source software for the cryptocurrency mining community.
